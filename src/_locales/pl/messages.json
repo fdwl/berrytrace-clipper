@@ -381,6 +381,14 @@
 	"highlights": {
 		"message": "Wyróżnienia"
 	},
+	"highlightsImportSuccess": {
+		"message": "Zaimportowano $1 wyróżnień.",
+		"placeholders": {
+			"1": {
+				"content": "$1"
+			}
+		}
+	},
 	"highlightsNotFound": {
 		"message": "Nie znaleziono wyróżnień w artykule"
 	},
@@ -401,6 +409,12 @@
 	},
 	"importFailed": {
 		"message": "Import nie powiódł się. Sprawdź konsolę, aby uzyskać więcej informacji."
+	},
+	"importHighlights": {
+		"message": "Importuj wyróżnienia"
+	},
+	"importHighlightsDescription": {
+		"message": "Importuj wyróżnienia z pliku. Istniejące wyróżnienia zostaną zachowane."
 	},
 	"importModalTitle": {
 		"message": "Importuj"
@@ -588,6 +602,12 @@
 	"pageVariables": {
 		"message": "Zmienne strony"
 	},
+	"pagesRead": {
+		"message": "strona przeczytana"
+	},
+	"pagesReadPlural": {
+		"message": "strony przeczytane"
+	},
 	"pagesSaved": {
 		"message": "strona zapisana"
 	},
@@ -696,6 +716,9 @@
 	"rateExtensionDescription": {
 		"message": "Czy podoba Ci się Web Clipper? Pomóż nam, oceniając go."
 	},
+	"read": {
+		"message": "Przeczytane"
+	},
 	"reader": {
 		"message": "Czytnik"
 	},
@@ -785,6 +808,9 @@
 	},
 	"readerFontSystemSerif": {
 		"message": "Szeryfowa"
+	},
+	"readerFontUnavailable": {
+		"message": "Ta czcionka nie jest tutaj dostępna — Twoja przeglądarka może blokować czcionki niestandardowe."
 	},
 	"readerFonts": {
 		"message": "Czcionki"
@@ -893,6 +919,9 @@
 	},
 	"saveBehaviorLabel": {
 		"message": "Zachowanie zapisu"
+	},
+	"saved": {
+		"message": "Zapisane"
 	},
 	"saveFile": {
 		"message": "Zapisz plik..."
