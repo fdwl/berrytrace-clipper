@@ -56,7 +56,8 @@
 	"web_accessible_resources": [
 		{
 			"resources": ["reader.css", "reader-script.js", "browser-polyfill.min.js", "style.css", "side-panel.html", "flatten-shadow-dom.js", "highlighter.css"],
-			"matches": [ "*://*/*" ]
+			"matches": [ "*://*/*" ],
+			"use_dynamic_url": true
 		}
 	],
 	"content_security_policy": {
