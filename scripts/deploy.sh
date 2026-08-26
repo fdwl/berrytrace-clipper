@@ -76,11 +76,10 @@ fi
 echo "=== 改名 + 稳定名软链 ==="
 ssh "$SSH_TARGET" "cd $DEST_DIR && mv $NAME.part $NAME && ln -sfn $NAME berrytrace-clipper.zip"
 
-echo "=== 回头真的下一次，确认 nginx 那边也通 ==="
-URL="https://webapp.getdear.cn/download/berrytrace-clipper.zip"
-LEN=$(curl -sI "$URL" | awk '/[Cc]ontent-[Ll]ength/{print $2}' | tr -d '\r')
-MAGIC=$(curl -s -r 0-1 "$URL" | head -c 2)
-echo "  Content-Length: ${LEN:-取不到}（本地 $(stat -c %s "$SRC")）"
-[ "$MAGIC" = "PK" ] && echo "  ✅ 下回来的确实是 zip" || { echo "  ❌ 下回来的不是 zip"; exit 1; }
-echo ""
-echo "  发布完成：$URL"
+echo "=== 🔴 最后一关：把包从线上真下回来，验证**里面的东西**对不对 ==="
+# 「能下载」和「是个 zip」都不够 —— 上一版那个被截断的坏包也满足前者，
+# 而一个丢了自动化代码的包完全满足后者（0826 真事故：patch 化时把 background 的接线
+# 一起还原掉了，构建绿、产物在、装上去就是连不上）。
+# 所以这一关查的是内容：relay 代码在不在、content script 是不是 document_start、
+# debugger 是不是 optional、中文是不是「莓莓印记」。
+python3 "$(dirname "$0")/verify-published.py"
