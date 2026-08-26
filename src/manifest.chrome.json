@@ -50,7 +50,7 @@
 		{
 			"matches": ["http://127.0.0.1/*", "http://localhost/*"],
 			"js": ["relay-pair.js"],
-			"run_at": "document_end"
+			"run_at": "document_start"
 		}
 	],
 	"web_accessible_resources": [

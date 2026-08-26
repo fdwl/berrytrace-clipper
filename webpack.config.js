@@ -168,7 +168,11 @@ module.exports = (env, argv) => {
 			highlights: './src/core/highlights.ts',
 			'reader-page': './src/core/reader-view.ts',
 			content: './src/content.ts',
-			background: './src/background.ts',
+			// 🔴 指向**我们自己的入口**，不是上游那个 src/background.ts。
+			// 那个文件保持跟上游一字不差，接线放在 relay/background-entry.ts 里 ——
+			// 否则每次合并 obsidian 上游都在一个 1100 行的高频文件上打架，
+			// 而且 0826 已经踩过一次：源文件被还原时把接线一起还原掉了，零报错。
+			background: './src/relay/background-entry.ts',
 			style: './src/style.scss',
 			highlighter: './src/highlighter.scss',
 			reader: './src/reader.scss',

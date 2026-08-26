@@ -59,7 +59,28 @@ async function verifyAndStore(token: string, port: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * 主动告诉页面「插件在」。
+ *
+ * 🔴 **不能只等页面发 ping**：页面里那段脚本是同步执行的，而 content script
+ * 注入有自己的时机。`document_end` 的时候页面早就把 ping 发完了 ——
+ * 我们错过它，页面等 1.5 秒之后就显示「没有检测到插件」，而插件其实装着。
+ * ⇒ 两头都做：这里注入后主动播几次，页面那边也重试几次 ping。
+ *   多播几次是廉价的，漏一次的代价是用户以为插件没装。
+ */
+function announcePresence(): void {
+  const send = () => window.postMessage({ type: 'berrytrace-pair-present' }, location.origin);
+  send();
+  // document_start 时页面脚本还没跑、监听器还没挂上，所以隔一会儿再播两次。
+  setTimeout(send, 50);
+  setTimeout(send, 300);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', send, { once: true });
+  }
+}
+
 if (isLoopback()) {
+  announcePresence();
   window.addEventListener('message', (event: MessageEvent<PairMessage>) => {
     // 只认同一个 window 发出来的消息，挡掉 iframe 里的伪造。
     if (event.source !== window || !event.data) return;
