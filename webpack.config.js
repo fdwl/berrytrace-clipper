@@ -79,12 +79,27 @@ function getCustomIconsPatterns() {
     }));
 }
 
-function processLocales(content) {
+/**
+ * @param absoluteFrom CopyPlugin 传进来的源文件绝对路径。**语言就是从它推出来的** ——
+ *        `src/_locales/zh_CN/messages.json` ⇒ `zh_CN`。
+ *
+ * 为什么要按语言分：品牌名在中文里是「莓莓印记」，其它语言用 "Berrytrace"。
+ * 一张通用表做不到这件事，而把译名手工写进 36 个 messages.json 又会**每次合并上游都冲突**
+ * （上游一改翻译就撞车）。所以译名放我们自己的 `custom/config.json` 里，
+ * 源文件保持跟上游逐字节一致。
+ */
+function processLocales(content, absoluteFrom) {
     if (!customConfig || !customConfig.replace) return content;
+    const locale = absoluteFrom ? path.basename(path.dirname(String(absoluteFrom))) : '';
+    const byLocale = (customConfig.replaceByLocale || {})[locale] || {};
+    // 🔴 语言专属的必须放**后面**：对象展开时同名 key 后者覆盖前者。
+    // 写反过一次（把 byLocale 放前面），结果通用表的 "Obsidian"→"Berrytrace"
+    // 把中文的 "Obsidian"→"莓莓印记" 盖掉了，产物里中文界面全是 Berrytrace。
+    const table = { ...customConfig.replace, ...byLocale };
     const messages = JSON.parse(content);
     const processValue = (obj) => {
         if (typeof obj === 'string') {
-            return replaceInString(obj, customConfig.replace);
+            return replaceInString(obj, table);
         }
         if (typeof obj === 'object' && obj !== null) {
             for (const key in obj) {
@@ -96,14 +111,24 @@ function processLocales(content) {
     return JSON.stringify(processValue(messages), null, '\t');
 }
 
+/**
+ * 🔴 **CopyPlugin 的 transform 拿到的 `content` 是 Buffer，不是 string。**
+ *
+ * 踩过（0826 实测）：这里原本直接把 content 丢给 replaceInString，而那个函数
+ * 第一行就是 `if (typeof str !== 'string') return str` ⇒ **原样返回、一个字都没替换、
+ * 还不报错**。表现是产物里 popup.html / settings.html 满是 "Obsidian Web Clipper"，
+ * 而 manifest 和 _locales 却是对的 —— 因为那两个走 JSON.parse，会先隐式 toString。
+ *
+ * 这是个「静默失效」：构建绿、产物在、就是没替换。改这两个函数时别把 toString 去掉。
+ */
 function processHtml(content) {
     if (!customConfig || !customConfig.replace) return content;
-    return replaceInString(content, customConfig.replace);
+    return replaceInString(content.toString('utf8'), customConfig.replace);
 }
 
 function processCode(content) {
     if (!customConfig || !customConfig.replace) return content;
-    return replaceInString(content, customConfig.replace);
+    return replaceInString(content.toString('utf8'), customConfig.replace);
 }
 
 // Remove .DS_Store files
@@ -156,11 +181,21 @@ module.exports = (env, argv) => {
 			filename: '[name].js',
 			module: false,
 		},
-		devtool: isProduction ? false : 'source-map',
+		// BT_LOWMEM=1 时连 source-map 一起关掉：它和下面的 terser 并行是内存大头，
+		// 在小内存机器上构建会被 OOM kill（exit 137，看着像构建失败，其实是被杀了）。
+		devtool: isProduction || process.env.BT_LOWMEM ? false : 'source-map',
 		optimization: {
 			minimize: true,
 			minimizer: [
 				new TerserPlugin({
+					/**
+					 * 🔴 默认并行度是「CPU 核数」，每个 worker 吃几百 MB。
+					 * 8 核机器上就是 7 个 worker 同时跑 ⇒ 11G 内存的机器上
+					 * `npm run build:chrome` 会被 OOM kill，**development 模式也一样**
+					 * （minimize 在上面是无条件 true 的，不分 dev/prod）。
+					 * 小内存机器上：`BT_LOWMEM=1 npm run build:chrome`
+					 */
+					parallel: process.env.BT_LOWMEM ? 1 : true,
 					terserOptions: {
 						mangle: false,
 						compress: {
@@ -204,6 +239,8 @@ module.exports = (env, argv) => {
 			rules: [
 				{
 					test: /\.tsx?$/,
+					// loader 从**右往左**执行：先 brand-replace 改字面量，再交给 ts-loader 编译。
+					// 这样源文件在磁盘上一个字都不动 —— 合并 obsidian 上游时不会冲突。
 					use: [
 						{
 							loader: 'ts-loader',
@@ -212,7 +249,8 @@ module.exports = (env, argv) => {
 									module: 'ES2020'
 								}
 							}
-						}
+						},
+						path.resolve(__dirname, 'scripts/brand-replace-loader.js')
 					],
 					exclude: /node_modules/,
 				},

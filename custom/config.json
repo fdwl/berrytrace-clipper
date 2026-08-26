@@ -8,6 +8,7 @@
   "urlScheme": "berrytrace",
   "helpBaseUrl": "https://getdear.cn/help",
   "replace": {
+    "github.com/obsidianmd/": "github.com/fdwl/",
     "Obsidian Web Clipper": "Berrytrace Clipper",
     "obsidian-clipper": "berrytrace-clipper",
     "https://help.obsidian.md/Obsidian/Early+access+versions": "https://getdear.cn/help/early-access",
@@ -22,6 +23,10 @@
     "obsidian.md": "berrytrace.com",
     "obsidian://": "berrytrace://",
     "Obsidian": "Berrytrace"
+  },
+  "replaceByLocale": {
+    "zh_CN": { "Obsidian": "莓莓印记" },
+    "zh_TW": { "Obsidian": "莓莓印記" }
   },
   "codeReplace": {
     "obsidian://": "berrytrace://",

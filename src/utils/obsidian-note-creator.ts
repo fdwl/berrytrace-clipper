@@ -30,7 +30,7 @@ async function tryClipboardWrite(fileContent: string, obsidianUrl: string): Prom
 	if (success) {
 		// &clipboard tells Obsidian to read data from clipboard instead of the content param.
 		// content is a fallback shown only if Obsidian can't access the clipboard (e.g. on Linux).
-		obsidianUrl += `&clipboard&content=${encodeURIComponent(getMessage('clipboardError', 'https://help.berrytrace.com/web-clipper/troubleshoot'))}`;
+		obsidianUrl += `&clipboard&content=${encodeURIComponent(getMessage('clipboardError', 'https://help.obsidian.md/web-clipper/troubleshoot'))}`;
 		openObsidianUrl(obsidianUrl);
 		console.log('Obsidian URL:', obsidianUrl);
 	} else {
@@ -55,7 +55,7 @@ export async function saveToObsidian(
 	const isDailyNote = behavior === 'append-daily' || behavior === 'prepend-daily';
 
 	if (isDailyNote) {
-		obsidianUrl = `berrytrace://daily?`;
+		obsidianUrl = `obsidian://daily?`;
 	} else {
 		// Ensure path ends with a slash
 		if (path && !path.endsWith('/')) {
@@ -63,7 +63,7 @@ export async function saveToObsidian(
 		}
 
 		const formattedNoteName = sanitizeFileName(noteName);
-		obsidianUrl = `berrytrace://new?file=${encodeURIComponent(path + formattedNoteName)}`;
+		obsidianUrl = `obsidian://new?file=${encodeURIComponent(path + formattedNoteName)}`;
 	}
 
 	if (behavior.startsWith('append')) {
