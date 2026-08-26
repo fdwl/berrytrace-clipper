@@ -147,7 +147,9 @@ module.exports = (env, argv) => {
 			style: './src/style.scss',
 			highlighter: './src/highlighter.scss',
 			reader: './src/reader.scss',
-			'reader-script': './src/reader-script.ts'
+			'reader-script': './src/reader-script.ts',
+			// 自动化配对页的 content script（只在 127.0.0.1 上跑，见 manifest）
+			'relay-pair': './src/relay/pairContentScript.ts'
 		},
 		output: {
 			path: path.resolve(__dirname, outputDir),

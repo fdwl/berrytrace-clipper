@@ -46,6 +46,11 @@
 		{
 			"matches": ["http://*/*", "https://*/*"],
 			"js": ["browser-polyfill.min.js", "content.js"]
+		},
+		{
+			"matches": ["http://127.0.0.1/*", "http://localhost/*"],
+			"js": ["relay-pair.js"],
+			"run_at": "document_end"
 		}
 	],
 	"web_accessible_resources": [

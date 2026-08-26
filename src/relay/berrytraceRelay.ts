@@ -7,10 +7,12 @@
  *   · 扩展侧的转发引擎 `RelayConnection`：Apache-2.0，原样取自
  *     `microsoft/playwright` 的 `packages/extension/src/relayConnection.ts`。
  *     它把 `chrome.debugger.*` / `chrome.tabs.*` 暴露成一条 RPC 通道，**不含任何业务逻辑**。
- *   · 宿主侧的 `CDPRelayServer`：同样来自 Playwright，负责把 Playwright 客户端说的
- *     CDP 翻译成上面那五个 `chrome.*` 调用。
- *   ⇒ 我们只需要「把连接建起来、决定 attach 哪个标签」，别往这两块里塞逻辑，
- *      否则以后跟不上上游。
+ *   · 宿主侧是 `berrytrace_app` 的 `electron/services/browser-extension-relay.ts`，
+ *     **那是我们自己写的最小版**，不是 Playwright 的 `cdpRelay`：本仓动作层只要五个方法，
+ *     用裸 CDP 一一对应就够了，不需要把扩展伪装成一个完整 browser。
+ *   ⇒ 我们只需要「把连接建起来、决定 attach 哪个标签」。
+ *      **别往 `relayConnection.ts` 里塞逻辑**（那份要跟上游走），
+ *      要加就加在本文件或宿主侧。
  *
  * ── 为什么不照抄官方那套「点扩展图标 → 选标签 → 连」的流程 ──────────────────
  * 官方的场景是**人坐在电脑前**，让 AI 接管眼前这个标签页。
@@ -212,11 +214,22 @@ export class BerrytraceRelay {
 }
 
 let singleton: BerrytraceRelay | null = null;
+let pairListenerInstalled = false;
 
 /** background 里调一次即可。重复调用是安全的（service worker 会重启，这很常见）。 */
 export function initBerrytraceRelay(): BerrytraceRelay {
   if (!singleton) singleton = new BerrytraceRelay();
   void singleton.start();
+  // service worker 每次重启都会重新执行本文件，监听器只装一次，
+  // 否则一条配对消息会触发好几次重连。
+  if (!pairListenerInstalled && typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
+    pairListenerInstalled = true;
+    chrome.runtime.onMessage.addListener((message: { type?: string } | undefined) => {
+      // 用户在配对页点了「允许」，token 刚落盘 —— 立刻连，
+      // 不然他要盯着一个「未连接」的界面等完整个退避周期。
+      if (message?.type === 'berrytrace-relay-paired') restartBerrytraceRelay();
+    });
+  }
   return singleton;
 }
 
