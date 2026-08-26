@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<!--
+	首次安装后自动弹出的欢迎页（由 src/welcome/onInstall.ts 在 onInstalled/install 时打开）。
+
+	· 这是**扩展内置页面**，跟扩展一起发货 —— 没网也弹得出来。
+	· 那条 berrytrace:// 是桌面端真正注册的 scheme，核实过程写在
+	  src/welcome/welcomePage.ts 的文件头（protocol-handler.ts:138-148 / main.ts:254）。
+	· 文案直接写中文、没走 _locales：新增 message key 要改上游的 36 份 messages.json，
+	  那是每次合并 obsidian 上游的固定冲突源。这个页面是我们自己的，上游没有。
+	· CSP 是 `script-src 'self'`，所以脚本必须是外链的 welcome.js，不能内联。
+-->
+<html lang="zh-CN" id="welcome-page">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>莓莓印记 · 浏览器插件安装成功</title>
+	<link rel="stylesheet" href="style.css">
+	<link rel="stylesheet" href="welcome-style.css">
+</head>
+<body>
+	<main class="welcome">
+		<img class="welcome-logo" src="icons/icon128.png" alt="">
+		<h1 class="welcome-title">插件装好了</h1>
+		<p class="welcome-subtitle">现在这个浏览器已经和莓莓印记打通了。</p>
+
+		<a id="launch-app" class="btn mod-cta welcome-cta" href="berrytrace://open?from=clipper-welcome">启动莓莓印记</a>
+		<p id="launch-hint" class="welcome-hint small text-muted">浏览器会问你一次「是否允许打开莓莓印记」，选允许即可。</p>
+
+		<section class="welcome-steps">
+			<h2>接下来可以做什么</h2>
+			<ul>
+				<li>把当前网页剪藏进莓莓印记：点工具栏上的插件图标，或按 <code>Ctrl+Shift+O</code>（macOS 是 <code>Command+Shift+O</code>）。</li>
+				<li>找不到图标：点浏览器工具栏的拼图按钮，把「莓莓印记」固定出来。</li>
+				<li>让莓莓印记直接驱动这个浏览器：在 App 里发起一次配对，浏览器会打开一个本机页面，点一下「允许」就连上了。</li>
+			</ul>
+		</section>
+
+		<section id="launch-fallback" class="welcome-fallback is-hidden">
+			<h2>点了没反应？</h2>
+			<p class="small text-muted">上面那个按钮靠桌面端注册的 <code>berrytrace://</code> 协议唤起。什么都没发生，通常是下面两种情况之一：</p>
+			<ul class="small text-muted">
+				<li><strong>已经装了莓莓印记</strong>：手动打开一次 App。它每次启动都会向系统注册这个协议，注册过之后这个按钮就能用了。</li>
+				<li><strong>还没装</strong>：先去 <a href="https://getdear.cn/" target="_blank" rel="noopener">getdear.cn</a> 装桌面端。插件的剪藏功能需要它来接收内容。</li>
+			</ul>
+		</section>
+
+		<footer class="welcome-footer small">
+			<span id="welcome-version"></span>
+		</footer>
+	</main>
+	<script type="module" src="welcome.js"></script>
+</body>
+</html>

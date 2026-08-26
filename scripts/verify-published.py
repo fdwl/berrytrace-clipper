@@ -2,7 +2,8 @@
 
 判据不是「能下载」也不是「是个 zip」—— 那两条上一版坏包也满足。
 判据是：解开之后 background.js 里有 relay 代码、有 relay-pair.js、
-manifest 里那条 content script 是 document_start。
+manifest 里那条 content script 是 document_start、
+以及首次安装要弹的欢迎页（welcome.html / welcome.js）在包里且真的接上了 onInstalled。
 """
 import io, json, urllib.request, zipfile
 
@@ -39,6 +40,21 @@ if cs:
 all_ok &= check('debugger 在 optional_permissions 里（不是常驻权限）',
                 'debugger' in (m.get('optional_permissions') or []))
 all_ok &= check('名字是 Berrytrace Clipper', m.get('name') == 'Berrytrace Clipper', str(m.get('name')))
+
+# ── 欢迎页 ──────────────────────────────────────────────────────────────────
+# 判据同样是**内容**：三个文件齐、background 里真的有那条 onInstalled 接线、
+# 页面上那条深链真的是桌面端注册的 scheme。
+# ⚠️ 只查 ASCII 串：terser 的 `ascii_only: true` 会把 js 里的中文转成 \uXXXX，
+#    拿中文去 grep 产物永远是假红。
+all_ok &= check('welcome.html 在包里', 'berrytrace-clipper/welcome.html' in names)
+all_ok &= check('welcome.js 在包里', 'berrytrace-clipper/welcome.js' in names)
+all_ok &= check('welcome-style.css 在包里', 'berrytrace-clipper/welcome-style.css' in names)
+all_ok &= check('background.js 里有首次安装的接线', 'btWelcomeShownAt' in bg and 'welcome.html' in bg)
+
+wh = z.read('berrytrace-clipper/welcome.html').decode('utf-8')
+all_ok &= check('欢迎页上有拉起 App 的 berrytrace:// 深链', 'href="berrytrace://open' in wh)
+wj = z.read('berrytrace-clipper/welcome.js').decode('utf-8', 'replace')
+all_ok &= check('welcome.js 会记下「用户点了启动」', 'btWelcomeLaunchedAt' in wj)
 
 zh = z.read('berrytrace-clipper/_locales/zh_CN/messages.json').decode('utf-8')
 all_ok &= check('中文界面是「莓莓印记」', '莓莓印记' in zh)

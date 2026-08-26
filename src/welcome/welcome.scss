@@ -1,0 +1,115 @@
+/**
+ * 欢迎页的版式。**只管排版，不定义颜色和字号** ——
+ * 那些一律走 `styles/_variables.scss` 里的变量，跟 popup / settings 同一套，
+ * 所以它自动跟着浅色/深色主题走（`color-scheme: light dark`）。
+ *
+ * 单独一个 entry（`welcome-style`）而不是 `@import` 进 `src/style.scss`：
+ * 那个文件是上游的，动它等于给每次合并 obsidian 上游留一个冲突点。
+ * 页面里两张 css 都链上，公共控件（.btn / .text-muted / .small）还是用 style.css 那份。
+ *
+ * ⚠️ 顺带一条本仓的规矩（主仓 CLAUDE.md 七点五）：注释里不要出现方括号任意值类名的
+ *    字面形态 —— 扫描器不分代码和注释，照样会编译成一条 CSS 规则。
+ */
+
+#welcome-page {
+	body {
+		display: flex;
+		justify-content: center;
+		padding: 3rem 1.25rem 4rem;
+	}
+
+	.welcome {
+		width: 100%;
+		max-width: 32rem;
+		text-align: center;
+	}
+
+	.welcome-logo {
+		width: 4rem;
+		height: 4rem;
+		border-radius: var(--radius-m);
+	}
+
+	.welcome-title {
+		margin: 1.25rem 0 0.5rem;
+		font-size: 1.75rem;
+		line-height: 1.2;
+	}
+
+	.welcome-subtitle {
+		margin: 0 0 2rem;
+		color: var(--text-muted);
+		font-size: var(--font-ui-large);
+	}
+
+	// .btn 默认是 width:100% / 输入框那么高的小按钮（它本来长在 popup 那种窄容器里）。
+	// 这里是整页的主操作，给它一个真正点得到的尺寸。
+	.welcome-cta {
+		width: auto;
+		min-width: 14rem;
+		height: auto;
+		padding: 0.75rem 2rem;
+		font-size: var(--font-ui-large);
+		font-weight: 600;
+	}
+
+	.welcome-hint {
+		margin: 1rem 0 0;
+	}
+
+	.welcome-steps {
+		margin: 2.5rem 0 0;
+		padding: 1.25rem 1.5rem;
+		text-align: left;
+		background-color: var(--background-secondary);
+		border-radius: var(--radius-m);
+
+		h2 {
+			margin: 0 0 0.75rem;
+			font-size: var(--font-ui-medium);
+			font-weight: 600;
+		}
+
+		ul {
+			margin: 0;
+			padding-inline-start: 1.25rem;
+			color: var(--text-muted);
+		}
+
+		li + li {
+			margin-top: 0.5rem;
+		}
+	}
+
+	.welcome-fallback {
+		margin: 1.5rem 0 0;
+		padding: 1rem 1.25rem;
+		text-align: left;
+		border: 1px solid var(--background-modifier-border);
+		border-radius: var(--radius-m);
+
+		h2 {
+			margin: 0 0 0.5rem;
+			font-size: var(--font-ui-medium);
+			font-weight: 600;
+		}
+
+		p {
+			margin: 0 0 0.5rem;
+		}
+
+		ul {
+			margin: 0;
+			padding-inline-start: 1.25rem;
+		}
+
+		li + li {
+			margin-top: 0.375rem;
+		}
+	}
+
+	.welcome-footer {
+		margin: 2.5rem 0 0;
+		color: var(--text-faint);
+	}
+}

@@ -178,7 +178,13 @@ module.exports = (env, argv) => {
 			reader: './src/reader.scss',
 			'reader-script': './src/reader-script.ts',
 			// 自动化配对页的 content script（只在 127.0.0.1 上跑，见 manifest）
-			'relay-pair': './src/relay/pairContentScript.ts'
+			'relay-pair': './src/relay/pairContentScript.ts',
+			// 首次安装弹的欢迎页。脚本和样式各一个 entry：
+			// 样式不 @import 进上游的 src/style.scss，免得每次合并上游都在那个文件上打架。
+			// （`welcome-style` 会顺带产出一个空的 welcome-style.js，跟 style.js /
+			//   highlighter.js / reader.js 一样，是这个仓一直以来的形态，不是漏了什么。）
+			welcome: './src/welcome/welcomePage.ts',
+			'welcome-style': './src/welcome/welcome.scss'
 		},
 		output: {
 			path: path.resolve(__dirname, outputDir),
@@ -292,6 +298,7 @@ module.exports = (env, argv) => {
 					{ from: "src/settings.html", to: "settings.html", transform: processHtml },
 					{ from: "src/highlights.html", to: "highlights.html", transform: processHtml },
 					{ from: "src/reader.html", to: "reader.html", transform: processHtml },
+					{ from: "src/welcome.html", to: "welcome.html", transform: processHtml },
 					{ from: "src/icons", to: "icons", noErrorOnMissing: true },
 					...getCustomIconsPatterns(),
 					{ from: "node_modules/webextension-polyfill/dist/browser-polyfill.min.js", to: "browser-polyfill.min.js" },

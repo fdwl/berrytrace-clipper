@@ -23,9 +23,14 @@
 
 import '../background';
 import { initBerrytraceRelay } from './berrytraceRelay';
+import { initWelcomeOnInstall } from '../welcome/onInstall';
 
 // 剪藏和自动化是同一个扩展里的两件事：剪藏是用户看得见、愿意装的功能，
 // 自动化是它搭的车。装一次解决两件事 —— 安装摩擦才是这条线的主要矛盾。
 // 这里只起一个待机的连接器：没配对过就安静待着，不连、不重试、不打日志噪音。
 // Firefox / Safari 上它会自己识别出没有 chrome.debugger 而整个不启用。
 initBerrytraceRelay();
+
+// 首次安装弹欢迎页。**必须在顶层同步注册** —— MV3 的 service worker 装完就被叫起来，
+// `onInstalled` 只发一次；放进任何 await 后面都可能错过它，表现是「装了没弹」且零报错。
+initWelcomeOnInstall();

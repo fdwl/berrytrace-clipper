@@ -53,7 +53,17 @@ with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as z:
             full = os.path.join(base, f)
             z.write(full, os.path.relpath(full, stage))
 with zipfile.ZipFile(zp) as z:
-    assert 'berrytrace-clipper/manifest.json' in z.namelist(), 'manifest 不在顶层目录里'
+    names = z.namelist()
+    # 🔴 **上传前就要拦住的那一类**：多套一层目录。浏览器加载已解压的扩展时
+    # 只在你选中的那个目录的**第一层**找 manifest.json，找不到就报
+    # 「清单文件缺失或不可读取」—— 那句报错指向的方向完全是错的（听着像 manifest 写坏了，
+    # 其实是目录层数不对），能让人查半天。所以判据写死在这儿：
+    #   · 顶层**有且只有** berrytrace-clipper/ 这一个目录
+    #   · manifest.json 就在它的第一层，全包再没有第二份
+    tops = sorted({n.split('/')[0] for n in names})
+    assert tops == ['berrytrace-clipper'], f'顶层不止一个入口：{tops}'
+    manifests = sorted(n for n in names if n.endswith('/manifest.json') or n == 'manifest.json')
+    assert manifests == ['berrytrace-clipper/manifest.json'], f'manifest 的位置不对：{manifests}'
 print(f"  {os.path.getsize(zp)/1024/1024:.2f} MB")
 PY
 
