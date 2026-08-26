@@ -87,11 +87,11 @@ async function openViaUri(
 
 	let obsidianUrl: string;
 	if (isDailyNote) {
-		obsidianUrl = `obsidian://daily?`;
+		obsidianUrl = `berrytrace://daily?`;
 	} else {
 		const normalizedPath = path && !path.endsWith('/') ? path + '/' : path;
 		const formattedNoteName = sanitizeFileName(noteName);
-		obsidianUrl = `obsidian://new?file=${encodeURIComponent(normalizedPath + formattedNoteName)}`;
+		obsidianUrl = `berrytrace://new?file=${encodeURIComponent(normalizedPath + formattedNoteName)}`;
 	}
 
 	if (behavior.startsWith('append')) {

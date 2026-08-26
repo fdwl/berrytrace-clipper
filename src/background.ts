@@ -22,7 +22,7 @@ async function enableYouTubeEmbedRule(tabId: number): Promise<void> {
 				requestHeaders: [{
 					header: 'Referer',
 					operation: 'set' as any,
-					value: 'https://obsidian.md/'
+					value: 'https://berrytrace.com/'
 				}]
 			},
 			condition: {

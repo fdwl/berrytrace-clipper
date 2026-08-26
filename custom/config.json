@@ -1,0 +1,31 @@
+{
+  "name": "Berrytrace Clipper",
+  "nameShort": "莓莓印记",
+  "description": "Save and highlight web pages in a private and durable format that you can access offline. The official extension for Berrytrace.",
+  "homepage": "https://getdear.cn/",
+  "appName": "Berrytrace Clipper",
+  "appNameShort": "莓莓印记",
+  "urlScheme": "berrytrace",
+  "helpBaseUrl": "https://getdear.cn/help",
+  "replace": {
+    "Obsidian Web Clipper": "Berrytrace Clipper",
+    "obsidian-clipper": "berrytrace-clipper",
+    "https://help.obsidian.md/Obsidian/Early+access+versions": "https://getdear.cn/help/early-access",
+    "https://help.obsidian.md/web-clipper/troubleshoot": "https://getdear.cn/help/troubleshoot",
+    "https://help.obsidian.md/web-clipper/interpreter": "https://getdear.cn/help/interpreter",
+    "https://help.obsidian.md/web-clipper/variables": "https://getdear.cn/help/variables",
+    "https://help.obsidian.md/web-clipper": "https://getdear.cn/help",
+    "https://help.obsidian.md/": "https://getdear.cn/help/",
+    "https://obsidian.md/": "https://getdear.cn/",
+    ".obsidian": ".berrytrace",
+    "obsidian.md/": "berrytrace.com/",
+    "obsidian.md": "berrytrace.com",
+    "obsidian://": "berrytrace://",
+    "Obsidian": "Berrytrace"
+  },
+  "codeReplace": {
+    "obsidian://": "berrytrace://",
+    "obsidian.md/": "berrytrace.com/",
+    "obsidian.md": "berrytrace.com"
+  }
+}

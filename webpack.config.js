@@ -7,6 +7,105 @@ const package = require('./package.json');
 const webpack = require('webpack');
 const TerserPlugin = require('terser-webpack-plugin');
 
+const customConfigPath = path.resolve(__dirname, 'custom/config.json');
+const customConfig = fs.existsSync(customConfigPath) ? require(customConfigPath) : null;
+
+function replaceInString(str, replacements) {
+    if (typeof str !== 'string') return str;
+    if (!replacements) return str;
+
+    const urlPatterns = [];
+    const textPatterns = [];
+
+    for (const [from, to] of Object.entries(replacements)) {
+        if (from.includes('.') || from.includes('/') || from.includes(':')) {
+            urlPatterns.push([from, to]);
+        } else {
+            textPatterns.push([from, to]);
+        }
+    }
+
+    let result = str;
+
+    for (const [from, to] of urlPatterns) {
+        if (result.includes(from)) {
+            const regex = new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+            result = result.replace(regex, to);
+        }
+    }
+
+    for (const [from, to] of textPatterns) {
+        if (from === 'Obsidian Web Clipper' || from === 'obsidian-clipper') {
+            result = result.split(from).join(to);
+        } else {
+            const regex = new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+            result = result.replace(regex, to);
+        }
+    }
+
+    return result;
+}
+
+function processManifest(content) {
+    if (!customConfig) return content;
+    const manifest = JSON.parse(content);
+    if (customConfig.name) manifest.name = customConfig.name;
+    if (customConfig.description) manifest.description = customConfig.description;
+    if (customConfig.homepage) manifest.homepage_url = customConfig.homepage;
+    return JSON.stringify(manifest, null, '\t');
+}
+
+function getCustomIconsPatterns() {
+    if (!fs.existsSync(path.resolve(__dirname, 'custom'))) return [];
+    const customIconsDir = path.resolve(__dirname, 'custom');
+    const files = fs.readdirSync(customIconsDir).filter(f => f.startsWith('logo-') && f.endsWith('.png'));
+    const sizeMap = {
+        'logo-16.png': 'icon16.png',
+        'logo-32.png': 'icon32.png',
+        'logo-48.png': 'icon48.png',
+        'logo-64.png': 'icon64.png',
+        'logo-128.png': 'icon128.png',
+        'logo-150.png': 'icon150.png',
+        'logo-180.png': 'icon180.png',
+        'logo-192.png': 'icon192.png',
+        'logo-256.png': 'icon256.png',
+        'logo-512.png': 'icon512.png',
+        'logo-1024.png': 'icon1024.png'
+    };
+    return files.map(file => ({
+        from: path.join('custom', file),
+        to: path.join('icons', sizeMap[file] || file.replace('logo-', 'icon')),
+        noErrorOnMissing: false
+    }));
+}
+
+function processLocales(content) {
+    if (!customConfig || !customConfig.replace) return content;
+    const messages = JSON.parse(content);
+    const processValue = (obj) => {
+        if (typeof obj === 'string') {
+            return replaceInString(obj, customConfig.replace);
+        }
+        if (typeof obj === 'object' && obj !== null) {
+            for (const key in obj) {
+                obj[key] = processValue(obj[key]);
+            }
+        }
+        return obj;
+    };
+    return JSON.stringify(processValue(messages), null, '\t');
+}
+
+function processHtml(content) {
+    if (!customConfig || !customConfig.replace) return content;
+    return replaceInString(content, customConfig.replace);
+}
+
+function processCode(content) {
+    if (!customConfig || !customConfig.replace) return content;
+    return replaceInString(content, customConfig.replace);
+}
+
 // Remove .DS_Store files
 function removeDSStore(dir) {
 	const files = fs.readdirSync(dir);
@@ -141,19 +240,22 @@ module.exports = (env, argv) => {
 					{ 
 						from: isFirefox ? "src/manifest.firefox.json" : 
 							  (isSafari ? "src/manifest.safari.json" : "src/manifest.chrome.json"), 
-						to: "manifest.json" 
+						to: "manifest.json",
+						transform: processManifest
 					},
-					{ from: "src/popup.html", to: "popup.html" },
-					{ from: "src/side-panel.html", to: "side-panel.html" },
-					{ from: "src/settings.html", to: "settings.html" },
-					{ from: "src/highlights.html", to: "highlights.html" },
-					{ from: "src/reader.html", to: "reader.html" },
-					{ from: "src/icons", to: "icons" },
+					{ from: "src/popup.html", to: "popup.html", transform: processHtml },
+					{ from: "src/side-panel.html", to: "side-panel.html", transform: processHtml },
+					{ from: "src/settings.html", to: "settings.html", transform: processHtml },
+					{ from: "src/highlights.html", to: "highlights.html", transform: processHtml },
+					{ from: "src/reader.html", to: "reader.html", transform: processHtml },
+					{ from: "src/icons", to: "icons", noErrorOnMissing: true },
+					...getCustomIconsPatterns(),
 					{ from: "node_modules/webextension-polyfill/dist/browser-polyfill.min.js", to: "browser-polyfill.min.js" },
-					{ from: "src/flatten-shadow-dom.js", to: "flatten-shadow-dom.js" },
+					{ from: "src/flatten-shadow-dom.js", to: "flatten-shadow-dom.js", transform: processCode },
 					{
 						from: 'src/_locales',
-						to: '_locales'
+						to: '_locales',
+						transform: processLocales
 					}
 				],
 			}),
