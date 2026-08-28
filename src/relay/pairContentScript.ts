@@ -34,7 +34,35 @@ function isLoopback(): boolean {
   return RELAY_HOSTS.has(location.hostname);
 }
 
-async function verifyAndStore(token: string, port: string): Promise<boolean> {
+/**
+ * 配对结果。**`ok` 的判据是「WebSocket 真的握上手了」**，不是「口令存下来了」。
+ *
+ * 🔴 这条判据是 0828 李博实测逼出来的。他原话：
+ * 「我点击连接，访问一个网址点击连接，说连接连接了，但是宿主设置页面，还是连接失败。」
+ * 当时页面上那句「已连接」的全部依据只是 `chrome.storage.local.set` 没抛异常 ——
+ * 它证明的是**我们把钥匙记下来了**，跟门开没开毫无关系。
+ * 而那次门确实没开（浏览器里跑的是一个没有中继能力的旧包）。
+ *
+ * ⇒ 一次配对要说成功，必须走到终点：background 的 socket 到达 `OPEN`。
+ *   走不到就**如实说走到哪一步为止**，而不是给一句"连接没成功，刷新重试"——
+ *   刷新对这个故障一点用都没有，那句话只会让人一直刷。
+ */
+type PairOutcome = { ok: boolean; reason: string };
+
+/** background 那条 socket 现在什么状态。SW 可能刚被回收，问不到就当"还没连上"。 */
+async function relayStatus(): Promise<{ handshaken: boolean; connecting: boolean; build?: string } | null> {
+  try {
+    return (await chrome.runtime.sendMessage({ type: 'berrytrace-relay-status' })) as {
+      handshaken: boolean; connecting: boolean; build?: string;
+    };
+  } catch {
+    // 旧版插件没有这条消息（`Receiving end does not exist` / 无响应），
+    // 这**本身就是一条结论**，见调用处。
+    return null;
+  }
+}
+
+async function verifyAndStore(token: string, port: string): Promise<PairOutcome> {
   // 🔴 先回连确认：光凭页面上写着的 token 就存，等于谁都能给我们塞一个。
   // 这一步证明的是「发这个 token 的服务，确实认这个 token」。
   try {
@@ -42,11 +70,11 @@ async function verifyAndStore(token: string, port: string): Promise<boolean> {
       // 不带 cookie —— 这是本机 IPC，不是带身份的请求。
       credentials: 'omit',
     });
-    if (!res.ok) return false;
+    if (!res.ok) return { ok: false, reason: `客户端不认这把口令（HTTP ${res.status}）` };
     const body = (await res.json()) as { ok?: boolean; app?: string };
-    if (!body?.ok || body.app !== 'berrytrace') return false;
+    if (!body?.ok || body.app !== 'berrytrace') return { ok: false, reason: '回连校验没通过' };
   } catch {
-    return false;
+    return { ok: false, reason: `连不上客户端（127.0.0.1:${port}）—— 莓莓印记还开着吗？` };
   }
 
   await chrome.storage.local.set({
@@ -56,7 +84,28 @@ async function verifyAndStore(token: string, port: string): Promise<boolean> {
   });
   // 叫醒 background：不然它还在按退避节奏睡，用户点完「允许」要等几十秒才连上。
   await chrome.runtime.sendMessage({ type: 'berrytrace-relay-paired' }).catch(() => {});
-  return true;
+
+  // ── 走到终点：等 socket 真的 OPEN ──────────────────────────────────────
+  // 12 秒够了：口令已经存好，background 是被上面那条消息**立刻**叫起来的，
+  // 不用等退避周期。等不到就是真的连不上，再等下去只是让用户多盯一会儿。
+  let sawRelay = false;
+  for (let i = 0; i < 24; i++) {
+    const st = await relayStatus();
+    if (st) {
+      sawRelay = true;
+      if (st.handshaken) return { ok: true, reason: st.build ? `插件版本 ${st.build}` : '' };
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return {
+    ok: false,
+    reason: sawRelay
+      ? '口令收下了，但插件一直没能连上客户端 —— 客户端那边会说明原因'
+      // 🔴 问不到 background = **这一版插件里根本没有自动化中继**。
+      // 这正是 0828 那次的真因：客户端装的是一个早于中继的旧包。
+      // 这句话必须说出来，否则用户会一直在"刷新重试"上打转。
+      : '这一版插件里没有自动化中继（装的是旧包）—— 在客户端里重新装一次插件',
+  };
 }
 
 /**
@@ -94,9 +143,12 @@ if (isLoopback()) {
 
     if (msg.type === 'berrytrace-pair-approve') {
       if (typeof msg.token !== 'string' || !msg.token) return;
-      void verifyAndStore(msg.token, msg.port || location.port).then(ok => {
+      void verifyAndStore(msg.token, msg.port || location.port).then(r => {
         window.postMessage(
-          { type: ok ? 'berrytrace-pair-done' : 'berrytrace-pair-failed' },
+          // 🔴 **理由要带回去。** 失败的四种原因（客户端没开 / 口令不对 /
+          // 连不上 / 这一版插件没有中继）对用户的处置完全不同，
+          // 而页面原来只有一句"连接没成功，刷新重试"—— 对其中三种都是错的建议。
+          { type: r.ok ? 'berrytrace-pair-done' : 'berrytrace-pair-failed', reason: r.reason },
           location.origin,
         );
       });

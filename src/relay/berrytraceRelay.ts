@@ -112,8 +112,32 @@ if (typeof chrome !== 'undefined' && chrome.tabs?.onActivated) {
   });
 }
 
-/** 构建标记。改这一层的代码就把它往前挪一格 —— 宿主用它认人，见 `_open` 里的注释。 */
-const RELAY_BUILD = '0828-native';
+/**
+ * **宿主在磁盘上认这个串。** 别改它的形状 —— 改了主仓那边的校验会当场把包判成"没有中继"。
+ *
+ * ── 它买的是什么 ─────────────────────────────────────────────────────────────
+ * 〔0828 实测〕线上那个下载包是 0826 构建的，**整条档 C 的中继都不在里面**
+ * （没有 alarms 保活、握手不带 browser=、没有那几条 RPC）。而客户端的
+ * 「安装插件」把它就地覆盖到用户的插件目录里，装完一切显示正常：
+ * 目录在、`installed:true`、版本号还是 1.7.2 —— 于是"装了一个必然连不上的包"
+ * 这件事**在任何地方都没有痕迹**，用户看到的只是「连接失败」。
+ *
+ * ⇒ 主仓 `electron/native/desktop/extension-installer.ts` 的 `inspectRelayCapability()`
+ *   装完之后直接读 service worker 文件找这个串。找不到 = 这个包不带中继，
+ *   当场说清楚，而不是让用户去「扩展页关掉再打开」（对这个故障完全无效）。
+ *
+ * 🔴 **必须是一个完整的字面量，不能拼**〔0828 当场撞到〕：
+ *   头一版写的是 `` `BT-RELAY-CAPABLE:${RELAY_BUILD}` ``，产物里原样留着那个模板
+ *   （这份 webpack 配置不做常量内联），于是宿主认得出"有中继"、**认不出是哪一版**。
+ *   所以反过来：这一行是正本，构建标记从它身上切下来。
+ *
+ * 🔴 它还必须**被真的用掉**（下面 `relayDiag('start', …)`），否则压缩器会把它整段消掉，
+ *   而那时磁盘上的判据就凭空消失了 —— 一个零报错的失效。
+ */
+const RELAY_CAPABILITY_MARK = 'BT-RELAY-CAPABLE:0828-paired-truth';
+
+/** 构建标记。改这一层的代码就把上面那行往前挪一格 —— 宿主用它认人，见 `_open` 里的注释。 */
+const RELAY_BUILD = RELAY_CAPABILITY_MARK.slice('BT-RELAY-CAPABLE:'.length);
 
 /**
  * 我是哪个浏览器。
@@ -208,6 +232,23 @@ export class BerrytraceRelay {
   }
 
   /**
+   * **握手真的成过了吗** —— 只认 `OPEN`。
+   *
+   * 🔴 它和 `connected` 是**两个判据，不能互相代用**：
+   * · `connected` 服务的是"要不要再开一条"，所以 `CONNECTING` 也得算数（见上）。
+   * · 这一个服务的是"能不能告诉用户已经连上了"，而 `CONNECTING` 的下一步
+   *   完全可能是被宿主的 `verifyClient` 以口令不对回 401 —— 那时候用户看到的
+   *   「已连接」是**假的**，宿主那边同时显示"没连上"，两边说法打架。
+   *   （0828 李博实测原话：「说连接连接了，但是宿主设置页面，还是连接失败」。）
+   *
+   * ⇒ `OPEN` 是这条链上唯一够格的正面证据：宿主的口令校验挂在**握手之前**
+   *   （`verifyClient`），能走到 OPEN 就证明那把口令被它认了。
+   */
+  get handshaken(): boolean {
+    return this._ws?.readyState === WebSocket.OPEN;
+  }
+
+  /**
    * 这一层能不能用。**运行时判，不看构建目标** —— 同一份源码要能在
    * chrome / firefox / safari 三套产物里都不炸（判据 2）。
    */
@@ -221,7 +262,7 @@ export class BerrytraceRelay {
       return;
     }
     this._stopped = false;
-    relayDiag('start');
+    relayDiag('start', RELAY_CAPABILITY_MARK);
     await this._connectLoop();
   }
 
@@ -718,10 +759,25 @@ export function initBerrytraceRelay(): BerrytraceRelay {
   // 否则一条配对消息会触发好几次重连。
   if (!pairListenerInstalled && typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
     pairListenerInstalled = true;
-    chrome.runtime.onMessage.addListener((message: { type?: string } | undefined) => {
+    chrome.runtime.onMessage.addListener((
+      message: { type?: string } | undefined,
+      _sender,
+      sendResponse: (r: unknown) => void,
+    ) => {
       // 用户在配对页点了「允许」，token 刚落盘 —— 立刻连，
       // 不然他要盯着一个「未连接」的界面等完整个退避周期。
-      if (message?.type === 'berrytrace-relay-paired') restartBerrytraceRelay();
+      if (message?.type === 'berrytrace-relay-paired') { restartBerrytraceRelay(); return; }
+      // 🔴 **配对页拿它来判「到底连上没有」。**
+      // 在这条消息存在之前，配对页说「已连接」的判据是"token 存进 storage 了" ——
+      // 那只证明我们把钥匙记下来了，不证明门开了。见 `handshaken` 上面那段。
+      if (message?.type === 'berrytrace-relay-status') {
+        sendResponse({
+          handshaken: singleton?.handshaken === true,
+          connecting: singleton?.connected === true,
+          build: RELAY_BUILD,
+          swStartedAt: SW_STARTED_AT,
+        });
+      }
     });
   }
   return singleton;
