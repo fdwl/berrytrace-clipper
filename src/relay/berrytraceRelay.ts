@@ -114,13 +114,27 @@ type DiagEntry = { t: number; e: string; d?: string };
 let diagBuf: DiagEntry[] = [];
 let diagFlush: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * 按事件名计数。
+ *
+ * 🔴 **光有最近 N 条流水是不够的**〔0828 实测踩到〕：宿主那边心跳计数是 0，
+ * 想去流水里确认扩展到底发没发 —— 结果那 40 条全被「脚本退出后的重连」冲掉了
+ * （每 30 秒闹钟一次 connect-attempt/error/close 三条）。
+ * **计数不会被冲掉**，这正是它存在的理由。
+ */
+const diagCounts: Record<string, number> = {};
+
 export function relayDiag(event: string, detail?: string): void {
+  diagCounts[event] = (diagCounts[event] ?? 0) + 1;
   diagBuf.push({ t: Date.now(), e: event, d: detail });
   if (diagBuf.length > 40) diagBuf = diagBuf.slice(-40);
   const write = () => {
     try {
       void chrome.storage.local.set({
-        btRelayDiag: { swStartedAt: SW_STARTED_AT, updatedAt: Date.now(), log: diagBuf },
+        btRelayDiag: {
+          swStartedAt: SW_STARTED_AT, updatedAt: Date.now(),
+          build: RELAY_BUILD, counts: { ...diagCounts }, log: diagBuf,
+        },
       });
     } catch { /* storage 写不了也不该把中继带塌 */ }
   };

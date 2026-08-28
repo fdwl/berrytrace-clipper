@@ -86,9 +86,11 @@ function wireDiag(): void {
 	const paint = () => {
 		chrome.storage.local.get(['btRelayDiag', 'btRelayToken', 'btRelayPort', 'btRelayEnabled'])
 			.then(raw => {
-				const d = raw.btRelayDiag as { swStartedAt?: number; updatedAt?: number; log?: { t: number; e: string; d?: string }[] } | undefined;
+				const d = raw.btRelayDiag as { swStartedAt?: number; updatedAt?: number; build?: string; counts?: Record<string, number>; log?: { t: number; e: string; d?: string }[] } | undefined;
 				const head = `token=${raw.btRelayToken ? '有' : '无'} port=${raw.btRelayPort ?? '默认'} enabled=${raw.btRelayEnabled !== false}\n`
-					+ `swStartedAt=${d?.swStartedAt ?? '-'} updatedAt=${d?.updatedAt ?? '-'} 现在=${Date.now()}\n`;
+					+ `build=${d?.build ?? '-'} swStartedAt=${d?.swStartedAt ?? '-'} updatedAt=${d?.updatedAt ?? '-'} 现在=${Date.now()}\n`
+					// 🔴 计数放在流水前面：流水只有最近 40 条，会被重连刷掉；计数不会。
+					+ `计数=${JSON.stringify(d?.counts ?? {})}\n`;
 				const lines = (d?.log ?? []).map(x => `+${x.t - (d?.swStartedAt ?? x.t)}ms ${x.e}${x.d ? ' ' + x.d : ''}`);
 				box.textContent = 'BT-DIAG-BEGIN\n' + head + lines.join('\n') + '\nBT-DIAG-END';
 			})
