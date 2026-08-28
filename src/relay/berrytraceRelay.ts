@@ -204,6 +204,7 @@ export class BerrytraceRelay {
     const enabled = raw.btRelayEnabled !== false;   // 默认开，见下
     let token = (raw.btRelayToken as string) ?? null;
     let port = (raw.btRelayPort as number) ?? DEFAULT_RELAY_PORT;
+    const stored = token;
 
     // 🔴 **装的时候就配好** —— App 把口令写进了我们自己的插件目录。
     //
@@ -216,22 +217,27 @@ export class BerrytraceRelay {
     // ⚠️ `pairing.json` **不在 `web_accessible_resources` 里**，网页读不到它；
     //    只有插件自己 `fetch(chrome.runtime.getURL(...))` 拿得到。
     // ⚠️ 商店安装那条路没有这个文件（目录归浏览器管）⇒ 自然回落到配对页。
-    if (!token) {
-      try {
-        const res = await fetch(chrome.runtime.getURL('pairing.json'));
-        if (res.ok) {
-          const conf = (await res.json()) as { token?: unknown; port?: unknown };
-          if (typeof conf.token === 'string' && conf.token.length >= 16) {
-            token = conf.token;
-            if (typeof conf.port === 'number') port = conf.port;
-            // 存一份：文件可能被后续安装覆盖，而已经连上的会话不该被动。
+    //
+    // 🔴 **文件优先，不是"没有 storage 才读文件"**〔0828 实测踩到〕。
+    // 写成"没有才读"的话，只要用户手动配对过一次，storage 里那把**旧口令**
+    // 就会永远压住文件里的新口令 —— 现象是每次重连都被宿主拒掉（close 1006），
+    // 而两边都只看得到「连不上」，看不出是口令对不上。
+    // 文件是 App 装插件时写的，它就是「这台机器上的 App 认哪把钥匙」的正本。
+    try {
+      const res = await fetch(chrome.runtime.getURL('pairing.json'));
+      if (res.ok) {
+        const conf = (await res.json()) as { token?: unknown; port?: unknown };
+        if (typeof conf.token === 'string' && conf.token.length >= 16) {
+          token = conf.token;
+          if (typeof conf.port === 'number') port = conf.port;
+          if (stored !== token) {
             await chrome.storage.local.set({ btRelayToken: token, btRelayPort: port });
-            relayDiag('pairing-from-file', `port=${port}`);
+            relayDiag('pairing-from-file', `port=${port}${stored ? '（覆盖了 storage 里的旧口令）' : ''}`);
           }
         }
-      } catch {
-        // 没这个文件是**正常情况**（商店安装），不是故障，不记 error。
       }
+    } catch {
+      // 没这个文件是**正常情况**（商店安装），不是故障，不记 error。
     }
     return { token, port, enabled };
   }
