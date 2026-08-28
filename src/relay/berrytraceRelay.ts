@@ -95,7 +95,28 @@ type HostRpc = { id: number; method: string; params?: unknown[] };
 const SW_STARTED_AT = Date.now();
 
 /** 构建标记。改这一层的代码就把它往前挪一格 —— 宿主用它认人，见 `_open` 里的注释。 */
-const RELAY_BUILD = '0828-diag2';
+const RELAY_BUILD = '0828-multi';
+
+/**
+ * 我是哪个浏览器。
+ *
+ * 🔴 **必须报上去，否则宿主分不清是谁连上来的。**
+ * Chrome 和 Edge 加载的是**同一个插件目录**（`~/.berrytrace/extensions/berrytrace-clipper`），
+ * 于是它们的扩展 ID 一样、读到的口令也一样，两边会**同时连到同一个中继**。
+ * 宿主那边原本是「后来的顶掉先来的」⇒ 动作会落在**随机一个浏览器**的 cookie 罐里，
+ * 而登录态偏偏只在其中一个里面（李博 0828：「我的账号登录信息，都在 edge」）。
+ * ⇒ 这是「拿错 cookie 罐」的假成功形态，必须在握手这一层就分开。
+ *
+ * 判据用 UA：Edge 的 UA 里有 `Edg/`（不是 `Edge/`，那是旧版 EdgeHTML）。
+ * 顺序要紧：Edge 的 UA 里**同时含有** `Chrome/`，所以先判 Edge。
+ */
+function detectBrowserId(): string {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  if (/\bEdg\//.test(ua)) return 'edge';
+  if (/\bOPR\//.test(ua)) return 'opera';
+  if (/\bChrome\//.test(ua)) return 'chrome';
+  return 'other';
+}
 
 /**
  * 中继的**自诊断日志**，落在 `chrome.storage.local.btRelayDiag` 里。
@@ -268,7 +289,8 @@ export class BerrytraceRelay {
     // （用户机器上进不去 service worker 控制台）。把构建标记写进握手地址，
     // 宿主一眼就能说出「连上来的是不是我刚装的那一版」。改代码时记得改它。
     const url = `ws://127.0.0.1:${settings.port}/extension?token=${encodeURIComponent(settings.token!)}`
-      + `&build=${encodeURIComponent(RELAY_BUILD)}`;
+      + `&build=${encodeURIComponent(RELAY_BUILD)}`
+      + `&browser=${encodeURIComponent(detectBrowserId())}`;
     let ws: WebSocket;
     try {
       ws = new WebSocket(url);
@@ -381,6 +403,7 @@ export class BerrytraceRelay {
             hasOffscreen: typeof chrome.offscreen !== 'undefined',
             hasAlarms: typeof chrome.alarms !== 'undefined',
             ua: navigator.userAgent,
+            browserId: detectBrowserId(),
             swStartedAt: SW_STARTED_AT,
           },
         }));
