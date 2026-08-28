@@ -95,7 +95,7 @@ type HostRpc = { id: number; method: string; params?: unknown[] };
 const SW_STARTED_AT = Date.now();
 
 /** 构建标记。改这一层的代码就把它往前挪一格 —— 宿主用它认人，见 `_open` 里的注释。 */
-const RELAY_BUILD = '0828-takeover';
+const RELAY_BUILD = '0828-win';
 
 /**
  * 我是哪个浏览器。
@@ -461,6 +461,18 @@ export class BerrytraceRelay {
           }
         }
         ws.send(JSON.stringify({ id: msg.id, result: { restored } }));
+        return;
+      }
+      if (msg.method === 'berrytrace.newWindow') {
+        // 量黄条要一个**干净窗口**：同一个窗口里前面挂过 debugger 的话，
+        // 黄条（如果是窗口级的）那时就已经在了，"对照组"就含着它，
+        // 差值当然是 0 —— 而那个 0 什么也没证明。
+        const { url } = (msg.params?.[0] ?? {}) as { url?: string };
+        const w = await chrome.windows.create({ url: url ?? 'about:blank', focused: true });
+        ws.send(JSON.stringify({
+          id: msg.id,
+          result: { windowId: w?.id ?? null, tabId: w?.tabs?.[0]?.id ?? null },
+        }));
         return;
       }
       if (msg.method === 'berrytrace.measureTab') {
