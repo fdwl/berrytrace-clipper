@@ -239,6 +239,27 @@ export class BerrytraceRelay {
         ws.send(JSON.stringify({ id: msg.id, result: { pong: true, swStartedAt: SW_STARTED_AT, now: Date.now() } }));
         return;
       }
+      if (msg.method === 'berrytrace.env') {
+        // 🔴 **故障隔离用的最小 RPC**：只读几个不会失败的东西，一个标签都不开。
+        // 0828 在李博的 Mac 上，自测一发出去连接就没了、一条判据都没推上来 ——
+        // 分不清是「RPC 通路本身不通」还是「自测里某一步把 worker 干掉了」。
+        // 有了这条：它通 ⇒ 通路没问题，问题在自测里；它也不通 ⇒ 问题在通路上。
+        const manifest = chrome.runtime.getManifest();
+        ws.send(JSON.stringify({
+          id: msg.id,
+          result: {
+            hasDebuggerPermission: await chrome.permissions.contains({ permissions: ['debugger'] }),
+            permissions: manifest.permissions ?? [],
+            optionalPermissions: (manifest as { optional_permissions?: string[] }).optional_permissions ?? [],
+            version: manifest.version,
+            hasOffscreen: typeof chrome.offscreen !== 'undefined',
+            hasAlarms: typeof chrome.alarms !== 'undefined',
+            ua: navigator.userAgent,
+            swStartedAt: SW_STARTED_AT,
+          },
+        }));
+        return;
+      }
       if (msg.method === 'berrytrace.listTabs') {
         // 给 L1（桌面自动化）当**回读判据**：真键盘真鼠标开出来的标签，
         // 只有在这份清单里出现了才算数。桌面那边 helper 说 ok 不算数
