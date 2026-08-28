@@ -94,6 +94,9 @@ type HostRpc = { id: number; method: string; params?: unknown[] };
  */
 const SW_STARTED_AT = Date.now();
 
+/** 构建标记。改这一层的代码就把它往前挪一格 —— 宿主用它认人，见 `_open` 里的注释。 */
+const RELAY_BUILD = '0828-diag2';
+
 /**
  * 中继的**自诊断日志**，落在 `chrome.storage.local.btRelayDiag` 里。
  *
@@ -213,7 +216,12 @@ export class BerrytraceRelay {
       relayDiag('open-skipped', `readyState=${this._ws.readyState}`);
       return;
     }
-    const url = `ws://127.0.0.1:${settings.port}/extension?token=${encodeURIComponent(settings.token!)}`;
+    // 🔴 `build` 是**认人用的**，不是装饰。0828 排查时卡了很久：宿主看到「扩展连上了」，
+    // 扩展自己的诊断却一条都没有 —— 无法判断连进来的到底是哪一版代码
+    // （用户机器上进不去 service worker 控制台）。把构建标记写进握手地址，
+    // 宿主一眼就能说出「连上来的是不是我刚装的那一版」。改代码时记得改它。
+    const url = `ws://127.0.0.1:${settings.port}/extension?token=${encodeURIComponent(settings.token!)}`
+      + `&build=${encodeURIComponent(RELAY_BUILD)}`;
     let ws: WebSocket;
     try {
       ws = new WebSocket(url);
