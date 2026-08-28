@@ -57,6 +57,16 @@ function remember(patch: Record<string, unknown>): void {
 function wireAutomationGrant(): void {
 	const state = document.getElementById('grant-state');
 	if (!state) return;
+
+	// 🔴 **顺手把 service worker 叫醒并让它重连一次。**
+	//
+	// 〔0828 实测，Edge 上踩到〕MV3 的 worker 是**按事件起的**。换掉插件文件、
+	// 重启浏览器之后，如果 manifest 的版本号没变就没有 `onInstalled`，
+	// 于是**新的 worker 一次都没跑过** —— 表现是「插件装好了、页面也是新的，
+	// 就是连不上」，而扩展页上一切正常。
+	// 这条消息（配对完成那条）本来就会触发重连，拿来当"叫醒"正好。
+	// 副作用只有一次重连，而重连本身是幂等的。
+	try { void chrome.runtime.sendMessage({ type: 'berrytrace-relay-paired' }).catch(() => {}); } catch { /* 没有 runtime 就算了 */ }
 	try {
 		chrome.permissions.contains({ permissions: ['debugger'] })
 			.then(ok => {
