@@ -94,8 +94,26 @@ type HostRpc = { id: number; method: string; params?: unknown[] };
  */
 const SW_STARTED_AT = Date.now();
 
+/**
+ * 自上次被问起以来，**哪些标签被切到了前台**。
+ *
+ * 🔴 监听器必须在**顶层同步注册**：MV3 的 worker 被唤醒时重新执行整个模块，
+ * 事件在那一轮就派发 —— 注册进任何 `await` 后面都可能错过它，而且零报错。
+ * （同 `installKeepaliveAlarm` 那条注释。）
+ *
+ * ⚠️ worker 被回收再唤醒会清空这个集合。那是可以接受的：它服务的是
+ * 「这一步失败了，是不是有人点进来过」这种**分钟级**的问答，而只要
+ * 有连接在，心跳就压着 worker 不让它被回收。
+ */
+const activatedSince = new Set<number>();
+if (typeof chrome !== 'undefined' && chrome.tabs?.onActivated) {
+  chrome.tabs.onActivated.addListener((info) => {
+    try { activatedSince.add(info.tabId); } catch { /* 记不下就算了，不许因此炸掉 */ }
+  });
+}
+
 /** 构建标记。改这一层的代码就把它往前挪一格 —— 宿主用它认人，见 `_open` 里的注释。 */
-const RELAY_BUILD = '0828-win';
+const RELAY_BUILD = '0828-badge';
 
 /**
  * 我是哪个浏览器。
@@ -461,6 +479,23 @@ export class BerrytraceRelay {
           }
         }
         ws.send(JSON.stringify({ id: msg.id, result: { restored } }));
+        return;
+      }
+      if (msg.method === 'berrytrace.takeActivations') {
+        // ── 🔴 「用户是不是点进来了」的**唯一零歧义判据** ───────────────────
+        //
+        // 我们开的标签一律 `active:false`，整趟作业期间它就该一直是后台的。
+        // 所以它一旦变成 active，只可能是**人去点了它**（李博 0828：
+        // 「用户如果不小心点击进来，他乱点了，会导致我们成功率的下降」）。
+        //
+        // 为什么不在宿主侧轮询 `tabs.get().active`：那是**采样**，
+        // 用户切进去点两下再切出来，两次采样之间什么都看不到。
+        // 事件是连续的，`onActivated` 一次都不会漏。
+        //
+        // take 语义（读完就清）：宿主问的是「上一次问到现在，有没有人点进来」。
+        const list = [...activatedSince];
+        activatedSince.clear();
+        ws.send(JSON.stringify({ id: msg.id, result: { activated: list } }));
         return;
       }
       if (msg.method === 'berrytrace.reload') {
