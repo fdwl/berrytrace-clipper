@@ -39,6 +39,37 @@ function remember(patch: Record<string, unknown>): void {
 	}
 }
 
+/**
+ * 显示「这个浏览器的自动化能力就绪了没有」。
+ *
+ * 🔴 **这里为什么没有「授权」按钮**（0828 实测，订正了上一版设计）：
+ * `debugger` 是 Chrome 的**不可选权限** —— 即使写进 `optional_permissions`，
+ * `chrome.permissions.request()` 也会当场拒绝：
+ *   `Only permissions specified in the manifest may be requested.`
+ * （同一份 optional 里的 `tabs` 就能正常弹确认框，所以不是我们写错了，是这条权限的规则。
+ *   浏览器自己 `getManifest().optional_permissions` 里**还看得到它**，
+ *   ⇒ 这是一处「配置看着生效、运行时静默失效」的形状，不实测发现不了。）
+ *
+ * ⇒ `debugger` 已经改回**必需权限**。解压安装（我们的自动安装那条路）不弹任何确认框；
+ *   将来上商店的话，安装时的权限清单里会多一条，那是这条能力的固有成本。
+ * ⇒ 这一段只负责**如实显示状态**，不假装能补救。
+ */
+function wireAutomationGrant(): void {
+	const state = document.getElementById('grant-state');
+	if (!state) return;
+	try {
+		chrome.permissions.contains({ permissions: ['debugger'] })
+			.then(ok => {
+				state.textContent = ok
+					? '✅ 自动化能力已就绪。在 App 里发起一次配对就能用。'
+					: '⚠️ 这个浏览器没有授予调试权限，自动化用不了（重新安装一次插件通常就好了）。';
+			})
+			.catch(() => { state.textContent = ''; });
+	} catch {
+		state.textContent = '';
+	}
+}
+
 function init(): void {
 	remember({ btWelcomeLoadedAt: Date.now() });
 
@@ -50,6 +81,8 @@ function init(): void {
 			versionEl.textContent = '';
 		}
 	}
+
+	wireAutomationGrant();
 
 	const launch = document.getElementById('launch-app') as HTMLAnchorElement | null;
 	const fallback = document.getElementById('launch-fallback');

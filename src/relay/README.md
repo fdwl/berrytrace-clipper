@@ -27,8 +27,12 @@
 
 ## 三条要守住的判据
 
-1. **`debugger` 是 optional 权限**，不进常驻 `permissions`。纯剪藏用户永远不会看到
-   「正在调试此浏览器」黄条，商店审核也好解释。每次建会话前必须 `permissions.request`。
+1. 🔴 **`debugger` 必须是常驻权限**〔0828 实测订正，原来这条写反了〕。
+   Chrome 把它列在「不可选」名单里：写进 `optional_permissions` 后
+   `getManifest()` 里看得见，但 `permissions.request()` 当场拒
+   `Only permissions specified in the manifest may be requested.`
+   ⇒ 建会话前只能 `permissions.contains` 确认，**不要调 `request`**（那是无效补救）。
+   复跑：`node scripts/e2e/s10-three-lanes-live-check.mjs`（主仓）。
 2. **Firefox / Safari 上整层不启用**。Safari 根本没有 `chrome.debugger` API，
    Firefox 的形状也不同。按**运行时**有没有 `chrome.debugger` 来判，不靠构建期开关 ——
    三套构建共用一份源码。

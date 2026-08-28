@@ -21,9 +21,15 @@
  * ⇒ 连接由 **App 侧发起**；标签一律 `active: false` 在后台开，不抢用户当前视图。
  *
  * ── 三条踩过的判据，改之前先看 ───────────────────────────────────────────────
- * 1. **`debugger` 权限是 optional 的**，不在 manifest 的常驻 `permissions` 里。
- *    纯剪藏用户永远不会看到「正在调试此浏览器」那条黄条，商店审核也好解释。
- *    ⇒ 每次建会话前必须 `chrome.permissions.request`，不能假设它已经在了。
+ * 1. 🔴 **`debugger` 只能是必需权限，不能是 optional**〔0828 实测订正〕。
+ *    本文件上一版写的是「optional + 每次建会话前 `permissions.request`」，
+ *    **那条路从写下来那天起就不通**：Chrome 把 `debugger` 列在「不可选」名单里，
+ *    `request()` 当场拒 `Only permissions specified in the manifest may be requested.`；
+ *    而 `getManifest().optional_permissions` 里**还照样看得见它** ——
+ *    配置看着生效、运行时静默失效，不实测发现不了。
+ *    （同一份 optional 里的 `tabs` 就能正常弹确认框，所以不是写法问题。）
+ *    ⇒ manifest 里它已挪进常驻 `permissions`。本层只 `contains` 确认，不 `request`。
+ *    代价：将来上商店时安装页会多一条权限说明。解压安装那条路不弹任何框。
  * 2. **Firefox / Safari 上这一层整个不启用**：Safari 没有 `chrome.debugger` API
  *    （台账同条第九节），Firefox 的 debugger API 形状也不同。
  *    运行时按 `chrome.debugger` 在不在来判，不靠构建期开关 —— 三套构建共用一份源码。
@@ -33,6 +39,7 @@
  */
 
 import { RelayConnection, debugLog } from './relayConnection';
+import { runSelfTest } from './selftest';
 
 /** 宿主 App 监听的默认端口。可被设置覆盖 —— 端口撞车是常态，不是异常。 */
 const DEFAULT_RELAY_PORT = 47823;
@@ -40,6 +47,26 @@ const DEFAULT_RELAY_PORT = 47823;
 /** 断线后的重连节奏。指数退避，封顶 30s：App 没开着的时候不该每秒敲一次。 */
 const RECONNECT_MIN_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
+
+/**
+ * 🔴 **MV3 的两条硬约束，这一层的形状全是被它们逼出来的**（0828 本机实测，都踩过）：
+ *
+ * 1. **service worker 空闲 30 秒就被回收**，连接跟着断。
+ *    Chrome 116 起 WebSocket 收发消息会重置这个计时器 ⇒ 只要我们自己按时说话，
+ *    连着的时候就不会被回收。间隔取 20s，留 10s 余量（网络抖一下不至于正好踩线）。
+ * 2. 🔴 **被回收之后，没有任何东西会主动把它叫醒去重连。**
+ *    `setTimeout` 排的重连随 worker 一起消失 —— 这就是 0828 那次
+ *    「配对页说连上了，宿主等了 180 秒一个连接都没有」的真正原因：
+ *    连接确实建过，SW 一死就没了，而重连定时器也死在里面。
+ *    ⇒ **必须用 `chrome.alarms`**：它是少数几个能把已回收的 worker 重新拉起来的事件源。
+ *    最小周期 30 秒（Chrome 120 起；再早是 1 分钟）。
+ *
+ * ⚠️ 别拿 `setInterval` 替代闹钟，也别拿闹钟替代心跳 —— 它们解决的是**两件事**：
+ *    心跳让活着的别死，闹钟让死了的复活。少任何一条，通道都会在几分钟内静默失效。
+ */
+const HEARTBEAT_MS = 20000;
+const ALARM_NAME = 'berrytrace-relay-keepalive';
+const ALARM_PERIOD_MINUTES = 0.5;
 
 type RelaySettings = {
   /** 没配对过就是 null —— 此时**不连**，避免空连接把宿主日志刷满。 */
@@ -55,12 +82,30 @@ type ControlMessage =
   | { type: 'session.stop' }
   | { type: 'ping' };
 
+/** 宿主发来的、我们自己命名空间下的 RPC（`berrytrace.*`）。见 {@link BerrytraceRelay._onHostRpc}。 */
+type HostRpc = { id: number; method: string; params?: unknown[] };
+
+/**
+ * 本次 service worker 实例是什么时候起来的。
+ *
+ * 🔴 这是**分辨「连接一直在」和「断了又重连」的唯一办法**：两种情况 ping 都会 pong，
+ * 但后者中间有一段时间宿主发什么都石沉大海。service worker 每次被回收再唤醒，
+ * 整个模块重新执行一遍 ⇒ 这个值会变。
+ */
+const SW_STARTED_AT = Date.now();
+
 export class BerrytraceRelay {
   private _ws: WebSocket | null = null;
   private _connection: RelayConnection | null = null;
   private _reconnectDelay = RECONNECT_MIN_MS;
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private _stopped = false;
+
+  /** 连着没有。宿主那边的 `connected` 是它的镜像，两边判据要一致。 */
+  get connected(): boolean {
+    return this._ws?.readyState === WebSocket.OPEN;
+  }
 
   /**
    * 这一层能不能用。**运行时判，不看构建目标** —— 同一份源码要能在
@@ -85,6 +130,7 @@ export class BerrytraceRelay {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
+    this._stopHeartbeat();
     this._connection?.close('本地停止');
     this._connection = null;
     this._ws?.close();
@@ -127,9 +173,11 @@ export class BerrytraceRelay {
       debugLog('自动化中继已连上宿主', settings.port);
       // 连上就把退避重置掉，否则一次长断线会让后面每次重连都慢 30s。
       this._reconnectDelay = RECONNECT_MIN_MS;
+      this._startHeartbeat(ws);
     };
 
     ws.onclose = () => {
+      this._stopHeartbeat();
       this._connection = null;
       this._ws = null;
       this._scheduleReconnect();
@@ -143,14 +191,60 @@ export class BerrytraceRelay {
       // RelayConnection 一旦接管，就由它自己处理 onmessage；这里只处理接管**之前**
       // 的控制消息。判据：接管后 this._connection 非空。
       if (this._connection) return;
-      let msg: ControlMessage;
+      let msg: ControlMessage | HostRpc;
       try {
         msg = JSON.parse(typeof event.data === 'string' ? event.data : '');
       } catch {
         return;
       }
-      void this._onControlMessage(msg, ws);
+      // 宿主的 RPC 走 `{id, method, params}`（跟 RelayConnection 同一种形状，
+      // 好让宿主那边共用同一套 _pending 对号）。我们只认自己命名空间下的方法，
+      // **别在这里放行 `chrome.*`** —— 那是 RelayConnection 的白名单说了算的。
+      if ('method' in msg && typeof msg.method === 'string' && msg.method.startsWith('berrytrace.')) {
+        void this._onHostRpc(msg as HostRpc, ws);
+        return;
+      }
+      void this._onControlMessage(msg as ControlMessage, ws);
     };
+  }
+
+  /**
+   * 宿主发来的、**我们自己命名空间**的 RPC。今天只有一条：三档路自测。
+   *
+   * 应答用 `{id, result}` / `{id, error}` —— 与 RelayConnection 的形状一致，
+   * 这样宿主侧不用为它单开一条等待通道（宿主 `_onMessage` 按「有没有 method」分派，
+   * 没有 method 的就去 `_pending` 里对号）。
+   */
+  private async _onHostRpc(msg: HostRpc, ws: WebSocket): Promise<void> {
+    try {
+      if (msg.method === 'berrytrace.ping') {
+        // 通讯层的活体判据。宿主用它量「静默 N 秒之后这条 WebSocket 还在不在」——
+        // MV3 的 service worker 空闲 30 秒就被回收，回收了这条连接就没了。
+        // 回 `swStartedAt` 是为了分辨**两种成功**：连接一直没断，还是断了又重连
+        // （重连也能 pong，但 swStartedAt 会变 ⇒ 中间那段时间指令是发不出去的）。
+        ws.send(JSON.stringify({ id: msg.id, result: { pong: true, swStartedAt: SW_STARTED_AT, now: Date.now() } }));
+        return;
+      }
+      if (msg.method === 'berrytrace.listTabs') {
+        // 给 L1（桌面自动化）当**回读判据**：真键盘真鼠标开出来的标签，
+        // 只有在这份清单里出现了才算数。桌面那边 helper 说 ok 不算数
+        // —— 那是 0828 那一轮七条缺陷的同一个形状。
+        const tabs = await chrome.tabs.query({});
+        ws.send(JSON.stringify({
+          id: msg.id,
+          result: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active, windowId: t.windowId })),
+        }));
+        return;
+      }
+      if (msg.method === 'berrytrace.selftest') {
+        const report = await runSelfTest((msg.params?.[0] ?? {}) as { fixtureBase: string });
+        ws.send(JSON.stringify({ id: msg.id, result: report }));
+        return;
+      }
+      ws.send(JSON.stringify({ id: msg.id, error: `未知方法 ${msg.method}` }));
+    } catch (e: any) {
+      ws.send(JSON.stringify({ id: msg.id, error: String(e?.message ?? e) }));
+    }
   }
 
   private async _onControlMessage(msg: ControlMessage, ws: WebSocket): Promise<void> {
@@ -176,8 +270,12 @@ export class BerrytraceRelay {
    */
   private async _startSession(msg: { url?: string; windowId?: number }, ws: WebSocket): Promise<void> {
     try {
-      // 判据 1：debugger 是 optional 权限，每次都要确认，不能假设它在。
-      const granted = await chrome.permissions.request({ permissions: ['debugger'] });
+      // 🔴 **这里只能 `contains`，不能 `request`**（0828 实测订正）。
+      // `chrome.permissions.request()` 要求**用户手势**，而这段代码跑在
+      // service worker 里响应一条 WebSocket 消息 —— 那里没有手势，调了必然抛。
+      // 授权动作被挪到扩展自己的欢迎页上（`welcome.html` 的「开启自动化」按钮），
+      // 那里的点击是真手势。这一层只负责「没授权就明确说没授权」，不假装能补救。
+      const granted = await chrome.permissions.contains({ permissions: ['debugger'] });
       if (!granted) {
         ws.send(JSON.stringify({ type: 'session.error', error: 'PERMISSION_DENIED_DEBUGGER' }));
         return;
@@ -202,6 +300,30 @@ export class BerrytraceRelay {
     }
   }
 
+  /**
+   * 心跳。**它不是为了探活，是为了不被回收** —— 探活是宿主的事。
+   * Chrome 116 起 WebSocket 的收发都会重置 service worker 的 30 秒空闲计时器，
+   * 所以只要我们每 20 秒说一句话，连着的时候这个 worker 就不会死。
+   */
+  private _startHeartbeat(ws: WebSocket): void {
+    this._stopHeartbeat();
+    this._heartbeatTimer = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(JSON.stringify({ type: 'heartbeat', swStartedAt: SW_STARTED_AT }));
+      } catch {
+        // 发不出去说明已经断了，onclose 会接手重连，这里不必也不该重复处理
+      }
+    }, HEARTBEAT_MS);
+  }
+
+  private _stopHeartbeat(): void {
+    if (this._heartbeatTimer) {
+      clearInterval(this._heartbeatTimer);
+      this._heartbeatTimer = null;
+    }
+  }
+
   private _scheduleReconnect(): void {
     if (this._stopped || this._reconnectTimer) return;
     const delay = this._reconnectDelay;
@@ -215,11 +337,13 @@ export class BerrytraceRelay {
 
 let singleton: BerrytraceRelay | null = null;
 let pairListenerInstalled = false;
+let alarmListenerInstalled = false;
 
 /** background 里调一次即可。重复调用是安全的（service worker 会重启，这很常见）。 */
 export function initBerrytraceRelay(): BerrytraceRelay {
   if (!singleton) singleton = new BerrytraceRelay();
   void singleton.start();
+  installKeepaliveAlarm();
   // service worker 每次重启都会重新执行本文件，监听器只装一次，
   // 否则一条配对消息会触发好几次重连。
   if (!pairListenerInstalled && typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
@@ -231,6 +355,32 @@ export function initBerrytraceRelay(): BerrytraceRelay {
     });
   }
   return singleton;
+}
+
+/**
+ * 🔴 **把已经被回收的 service worker 重新拉起来的那条路。**
+ *
+ * 0828 实测踩到的形状：配对页显示「已连上」，宿主却等了 180 秒一个连接都没有。
+ * 原因不是没连上 —— 是连上之后 SW 空闲 30 秒被回收，连接跟着没了，
+ * 而排在 `setTimeout` 里的重连**也死在同一个 worker 里**。
+ * 从那一刻起，除非用户手动动一下浏览器，这条通道永远不会自己回来。
+ *
+ * `chrome.alarms` 是少数几个能唤醒已回收 worker 的事件源。周期 30 秒（最小值）。
+ * ⚠️ 监听器必须**在顶层同步注册**：MV3 的 worker 被唤醒时会重新执行整个模块，
+ * 事件在那一轮就派发 —— 注册进任何 `await` 后面都可能错过它，而且零报错。
+ */
+function installKeepaliveAlarm(): void {
+  if (!chrome.alarms) return;   // Safari 之类没有这套 API，静默跳过
+  chrome.alarms.create(ALARM_NAME, { periodInMinutes: ALARM_PERIOD_MINUTES });
+  if (!alarmListenerInstalled) {
+    alarmListenerInstalled = true;
+    chrome.alarms.onAlarm.addListener((alarm) => {
+      if (alarm.name !== ALARM_NAME) return;
+      // 已经连着就什么都不做 —— 闹钟只负责「死了的复活」，不负责「活着的保活」。
+      if (singleton?.connected) return;
+      void singleton?.start();
+    });
+  }
 }
 
 /** 配对完成（拿到 token）之后调它，立刻连上，不用等退避计时。 */

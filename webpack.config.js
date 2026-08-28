@@ -179,6 +179,9 @@ module.exports = (env, argv) => {
 			'reader-script': './src/reader-script.ts',
 			// 自动化配对页的 content script（只在 127.0.0.1 上跑，见 manifest）
 			'relay-pair': './src/relay/pairContentScript.ts',
+			// 看不见的转换页：HTML → Markdown。**service worker 里没有 DOM**，
+			// turndown 在那儿会静默降级成「原样返回 HTML」——详见该文件的文件头。
+			offscreen: './src/relay/offscreenMarkdown.ts',
 			// 首次安装弹的欢迎页。脚本和样式各一个 entry：
 			// 样式不 @import 进上游的 src/style.scss，免得每次合并上游都在那个文件上打架。
 			// （`welcome-style` 会顺带产出一个空的 welcome-style.js，跟 style.js /
@@ -299,6 +302,7 @@ module.exports = (env, argv) => {
 					{ from: "src/highlights.html", to: "highlights.html", transform: processHtml },
 					{ from: "src/reader.html", to: "reader.html", transform: processHtml },
 					{ from: "src/welcome.html", to: "welcome.html", transform: processHtml },
+					{ from: "src/relay/offscreen.html", to: "offscreen.html", transform: processHtml },
 					{ from: "src/icons", to: "icons", noErrorOnMissing: true },
 					...getCustomIconsPatterns(),
 					{ from: "node_modules/webextension-polyfill/dist/browser-polyfill.min.js", to: "browser-polyfill.min.js" },
