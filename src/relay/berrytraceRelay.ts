@@ -463,6 +463,25 @@ export class BerrytraceRelay {
         ws.send(JSON.stringify({ id: msg.id, result: { restored } }));
         return;
       }
+      if (msg.method === 'berrytrace.reload') {
+        // ── 🔴 换了插件文件之后，让它**自己**把新代码跑起来 ──────────────────
+        //
+        // 0828 实测确认的形状：把 unpacked 扩展的文件整个换掉之后，
+        // **浏览器一直开着的话它照样跑旧的 service worker**。
+        // 内容哈希文件名 + 版本号跟着哈希走只解决"重启之后能换"，
+        // 不解决"不重启也要换"。而叫用户去 chrome://extensions 上关掉再打开
+        // 是我们不该提的要求（Edge 上那一页连辅助功能树都唤不醒，
+        // 桌面自动化也点不到）。
+        //
+        // `chrome.runtime.reload()` 是扩展**自己**能做的：它会重新读磁盘上的文件，
+        // 于是 App 装完新包只要说一句"重载"就完事了。
+        //
+        // ⚠️ 顺序要紧：**先应答再重载**。反过来的话 worker 当场没了，
+        // 宿主等到超时，然后把一次成功的重载报成失败。
+        ws.send(JSON.stringify({ id: msg.id, result: { reloading: true, was: RELAY_BUILD } }));
+        setTimeout(() => { try { chrome.runtime.reload(); } catch { /* 重载不了就还是旧的，宿主回读 build 会看见 */ } }, 150);
+        return;
+      }
       if (msg.method === 'berrytrace.newWindow') {
         // 量黄条要一个**干净窗口**：同一个窗口里前面挂过 debugger 的话，
         // 黄条（如果是窗口级的）那时就已经在了，"对照组"就含着它，
