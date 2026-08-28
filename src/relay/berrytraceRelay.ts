@@ -95,7 +95,7 @@ type HostRpc = { id: number; method: string; params?: unknown[] };
 const SW_STARTED_AT = Date.now();
 
 /** 构建标记。改这一层的代码就把它往前挪一格 —— 宿主用它认人，见 `_open` 里的注释。 */
-const RELAY_BUILD = '0828-multi';
+const RELAY_BUILD = '0828-takeover';
 
 /**
  * 我是哪个浏览器。
@@ -418,6 +418,74 @@ export class BerrytraceRelay {
           id: msg.id,
           result: tabs.map(t => ({ id: t.id, url: t.url, title: t.title, active: t.active, windowId: t.windowId })),
         }));
+        return;
+      }
+      if (msg.method === 'berrytrace.focusTab') {
+        // ── 档 C 的人工接管：把这个标签**亮给用户** ────────────────────────
+        //
+        // 🔴 这是整条通道里**唯一一处故意抢用户视线**的动作，所以它单独一条 RPC，
+        // 而不是给 `chrome.tabs.create` 加个参数 —— 加参数的话，某天有人顺手传个
+        // `active:true` 就把「不干扰」这条裁决悄悄废掉了，而且 grep 不出来。
+        //
+        // 回的那三个字段是**为了还得回去**：用户当时正在看的那个标签
+        // （`prevTabId`）、他当时在哪个窗口。接管完不还回去，等于自动化替他
+        // 换了一次标签页 —— 那比不接管更讨厌。
+        const { tabId } = (msg.params?.[0] ?? {}) as { tabId?: number };
+        if (typeof tabId !== 'number') throw new Error('focusTab 要 tabId');
+        const tab = await chrome.tabs.get(tabId);
+        const windowId = tab.windowId;
+        // 注意：这里问的是「**这个窗口**里谁是活的」，不是「全局哪个标签活」——
+        // 用户可能开着好几个窗口，我们只该还原自己动过的那一个。
+        const before = await chrome.tabs.query({ active: true, windowId });
+        const prevTabId = before[0]?.id ?? null;
+        await chrome.tabs.update(tabId, { active: true });
+        // 窗口本身也要提到前台：标签活了但窗口在别的桌面/被压在后面，
+        // 用户照样看不见，然后我们会等满 5 分钟超时。
+        await chrome.windows.update(windowId, { focused: true, drawAttention: true });
+        ws.send(JSON.stringify({ id: msg.id, result: { windowId, prevTabId } }));
+        return;
+      }
+      if (msg.method === 'berrytrace.restoreTab') {
+        // 把用户原来在看的那个标签还回去。
+        // 🔴 **失败不许抛**：这一步在接管的 finally 里跑，抛了会把
+        // 「用户点了继续」这个结局顶掉，变成一次莫名其妙的失败。
+        // 标签可能已经被用户自己关了 —— 那本来就不该报错。
+        const { prevTabId } = (msg.params?.[0] ?? {}) as { prevTabId?: number | null };
+        let restored = false;
+        if (typeof prevTabId === 'number') {
+          try {
+            await chrome.tabs.update(prevTabId, { active: true });
+            restored = true;
+          } catch {
+            // 用户自己把那个标签关了。不是错误。
+          }
+        }
+        ws.send(JSON.stringify({ id: msg.id, result: { restored } }));
+        return;
+      }
+      if (msg.method === 'berrytrace.measureTab') {
+        // ── 量「黄条挡不挡内容」用的 ────────────────────────────────────────
+        //
+        // 🔴 **必须走 `chrome.scripting`，不能走 CDP `Runtime.evaluate`**：
+        // 我们要量的正是「挂上 debugger 之后视口小了多少」，而挂 debugger 这件事
+        // 本身就是自变量。用 CDP 去量，等于**只能量到挂着的那一边**，
+        // 没有对照组 —— 那是 0828 一整天反复咬人的那种「判据只覆盖一半」。
+        // content script 两边都能跑，所以它是唯一可比的尺子。
+        const { tabId } = (msg.params?.[0] ?? {}) as { tabId?: number };
+        if (typeof tabId !== 'number') throw new Error('measureTab 要 tabId');
+        const [hit] = await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          func: () => ({
+            innerHeight: window.innerHeight,
+            innerWidth: window.innerWidth,
+            outerHeight: window.outerHeight,
+            outerWidth: window.outerWidth,
+            devicePixelRatio: window.devicePixelRatio,
+            visibility: document.visibilityState,
+          }),
+        });
+        ws.send(JSON.stringify({ id: msg.id, result: hit?.result ?? null }));
         return;
       }
       if (msg.method === 'berrytrace.selftest') {
