@@ -250,6 +250,7 @@ export class BerrytraceRelay {
       relayDiag('open');
       // 连上就把退避重置掉，否则一次长断线会让后面每次重连都慢 30s。
       this._reconnectDelay = RECONNECT_MIN_MS;
+      this._attachRelayConnection(ws);
       this._startHeartbeat(ws);
     };
 
@@ -266,26 +267,52 @@ export class BerrytraceRelay {
       // onerror 之后一定还会来一次 onclose，重连只挂在 onclose 上，别重复排队。
     };
 
+  }
+
+  /**
+   * 🔴 **连上那一刻就把上游的 `RelayConnection` 挂上，而不是等 `session.start`。**
+   *
+   * 〔0828 实测踩到〕原来的形状是「`session.start` 之后才 new RelayConnection」，
+   * 于是宿主直接发 `chrome.tabs.create` 时**没有人处理**：消息掉进
+   * `_onControlMessage` 的 switch，没有匹配的 `type`，**被静默丢掉** ——
+   * 宿主那边等到 30 秒超时，报 `BROWSER_EXTENSION_TIMEOUT: chrome.tabs.create`，
+   * 看着像浏览器卡住了，其实是**这条通道的两半从来没对上过**。
+   * （这也是为什么宿主的 `createSession` 一直没在真浏览器里跑通 ——
+   *   它在给一个还没上岗的接线员打电话。）
+   *
+   * 做法：让 `RelayConnection` 照常在构造时接管 `ws.onmessage`（**不改上游那份**），
+   * 然后把它**包一层门房**：自己命名空间的和控制消息先吃掉，其余原样转给它。
+   */
+  private _attachRelayConnection(ws: WebSocket): void {
+    const connection = new RelayConnection(ws);
+    connection.onclose = () => {
+      this._connection = null;
+    };
+    this._connection = connection;
+
+    // RelayConnection 构造时把 onmessage 指向了自己；接过来当作"下一跳"。
+    const passthrough = ws.onmessage;
     ws.onmessage = (event: MessageEvent) => {
-      // RelayConnection 一旦接管，就由它自己处理 onmessage；这里只处理接管**之前**
-      // 的控制消息。判据：接管后 this._connection 非空。
-      if (this._connection) return;
-      let msg: ControlMessage | HostRpc;
+      let msg: ControlMessage | HostRpc | null = null;
       try {
         msg = JSON.parse(typeof event.data === 'string' ? event.data : '');
       } catch {
-        return;
+        msg = null;
       }
-      // 宿主的 RPC 走 `{id, method, params}`（跟 RelayConnection 同一种形状，
-      // 好让宿主那边共用同一套 _pending 对号）。我们只认自己命名空间下的方法，
-      // **别在这里放行 `chrome.*`** —— 那是 RelayConnection 的白名单说了算的。
-      relayDiag('recv', JSON.stringify(msg).slice(0, 120));
-      if ('method' in msg && typeof msg.method === 'string' && msg.method.startsWith('berrytrace.')) {
+      if (msg) relayDiag('recv', JSON.stringify(msg).slice(0, 120));
+      if (msg && 'method' in msg && typeof msg.method === 'string' && msg.method.startsWith('berrytrace.')) {
         void this._onHostRpc(msg as HostRpc, ws);
         return;
       }
-      void this._onControlMessage(msg as ControlMessage, ws);
+      if (msg && 'type' in msg && typeof (msg as ControlMessage).type === 'string') {
+        void this._onControlMessage(msg as ControlMessage, ws);
+        return;
+      }
+      // 其余（`chrome.*` 那套 RPC）交给上游那份白名单去处理。
+      passthrough?.call(ws, event);
     };
+
+    connection.didInitialize();
   }
 
   /**
@@ -368,7 +395,11 @@ export class BerrytraceRelay {
   }
 
   /**
-   * 建一次自动化会话：后台开标签 → attach → 把 ws 交给 RelayConnection。
+   * 建一次自动化会话：后台开标签 → 交给已经挂好的 RelayConnection 记账。
+   *
+   * ⚠️ 这条路是**给"扩展自己开标签"这种用法留的**。宿主今天走的是另一条：
+   * 直接发 `chrome.tabs.create` / `chrome.debugger.attach` 这套 `chrome.*` RPC
+   * （见 `browser-extension-relay.ts` 的 `createSession`），因为它需要知道 tabId。
    *
    * 🔴 `active: false` 这一条是**约束不是偏好**：它是「不干扰」的落点。
    * 改成 true 之前先想清楚用户正在干什么 —— 抢标签焦点是我们被否掉过的形态。
@@ -392,14 +423,11 @@ export class BerrytraceRelay {
         windowId: msg.windowId,
       });
 
-      const connection = new RelayConnection(ws);
-      connection.onclose = () => {
-        this._connection = null;
-      };
-      this._connection = connection;
-      connection.attachTab(tab as chrome.tabs.Tab);
-      // 宿主会一直扣着 Playwright 侧的 CDP 消息，直到收到这一声。
-      connection.didInitialize();
+      // 🔴 **不要在这里再 new 一个 `RelayConnection`**：连接建立时已经挂过一个
+      // （`_attachRelayConnection`）。再 new 一个会把 `ws.onmessage` 抢过去，
+      // 于是我们那层门房没了 —— `berrytrace.*` 的 RPC 从此石沉大海。
+      this._connection?.attachTab(tab as chrome.tabs.Tab);
+      ws.send(JSON.stringify({ type: 'session.started', tabId: tab.id }));
     } catch (e: any) {
       ws.send(JSON.stringify({ type: 'session.error', error: String(e?.message ?? e) }));
     }
