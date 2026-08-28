@@ -113,7 +113,7 @@ if (typeof chrome !== 'undefined' && chrome.tabs?.onActivated) {
 }
 
 /** 构建标记。改这一层的代码就把它往前挪一格 —— 宿主用它认人，见 `_open` 里的注释。 */
-const RELAY_BUILD = '0828-badge';
+const RELAY_BUILD = '0828-native';
 
 /**
  * 我是哪个浏览器。
@@ -496,6 +496,52 @@ export class BerrytraceRelay {
         const list = [...activatedSince];
         activatedSince.clear();
         ws.send(JSON.stringify({ id: msg.id, result: { activated: list } }));
+        return;
+      }
+      if (msg.method === 'berrytrace.nativeProbe') {
+        // ── native messaging 到底行不行：**量，别猜** ────────────────────────
+        //
+        // 要回答的两件事（三档路那篇第四节欠的）：
+        //   ① 宿主→扩展的**单条消息上限**到底是多少（文档说 1MB，实测一下）；
+        //   ② 开着一条 native 端口，**能不能顶住 service worker 的 30 秒回收** ——
+        //      这一条才是选型的关键：能顶住的话，闹钟那套保活可以整个去掉。
+        //
+        // ②【怎么量】不在这里量：这条 RPC 本身走的是 WebSocket，而**WebSocket 的
+        // 收发自己就会重置那个 30 秒计时器**（Chrome 116+）—— 在这儿量等于
+        // 拿实验组当对照组。真正的判据是：开完端口，把 swStartedAt 落进 storage，
+        // 等宿主那边断开 WS 静默两分钟，再回来比。所以这里只负责**开端口 + 落痕迹**。
+        const { sizes } = (msg.params?.[0] ?? {}) as { sizes?: number[] };
+        const 结果: Record<string, unknown> = { swStartedAt: SW_STARTED_AT };
+        try {
+          const port = chrome.runtime.connectNative('com.berrytrace.relay');
+          结果.connected = true;
+          const 回话 = (payload: unknown, ms = 8000) => new Promise<unknown>((res) => {
+            const t = setTimeout(() => { port.onMessage.removeListener(on); res(null); }, ms);
+            const on = (m: unknown) => { clearTimeout(t); port.onMessage.removeListener(on); res(m); };
+            port.onMessage.addListener(on);
+            port.postMessage(payload);
+          });
+          结果.echo = await 回话({ op: 'ping' });
+          // ① 逐档试宿主→扩展的大消息。**从小往大试**：大的先失败会把端口带断，
+          //    后面每一档都变成"也失败"，于是量出来的上限比真的小。
+          const 上限: Record<string, unknown> = {};
+          for (const n of (sizes ?? [64 * 1024, 512 * 1024, 1024 * 1024, 2 * 1024 * 1024])) {
+            const r = (await 回话({ op: 'blob', n }, 15000)) as { len?: number } | null;
+            上限[String(n)] = r?.len ?? 'null';
+            if (!r) break;   // 断了就别往上试了，后面全是假的失败
+          }
+          结果.sizes = 上限;
+          // 端口**留着不关**：②那条判据要它开着。
+          (globalThis as unknown as { __btNativePort?: unknown }).__btNativePort = port;
+          port.onDisconnect.addListener(() => {
+            relayDiag('native-disconnect', String(chrome.runtime.lastError?.message ?? ''));
+          });
+          await chrome.storage.local.set({ btNativeProbe: { at: Date.now(), swStartedAt: SW_STARTED_AT } });
+        } catch (e: any) {
+          结果.connected = false;
+          结果.error = String(e?.message ?? e);
+        }
+        ws.send(JSON.stringify({ id: msg.id, result: 结果 }));
         return;
       }
       if (msg.method === 'berrytrace.reload') {
