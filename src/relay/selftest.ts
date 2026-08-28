@@ -299,14 +299,26 @@ export async function runSelfTest(
       // （clicks 一直是 0，没有任何报错）。这条跟「后台标签不渲染」是同一个根因，
       // 数据见 `台账/自动化/0828-后台标签页到底渲不渲染.md`。
       await chrome.debugger.sendCommand({ tabId }, 'Emulation.setFocusEmulationEnabled', { enabled: true });
+      // 解完焦点模拟要给它一帧去合成 —— 命中测试是在合成结果上做的。
+      await sleep(300);
       const box = await inMainWorld(tabId, mainInstallTrustProbe);
       if (box) {
-        for (const type of ['mousePressed', 'mouseReleased'] as const) {
-          await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent',
-            { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
+        // 🔴 **等结果，不等时间**〔0828 实测踩到〕：原来是「点完 sleep 250ms 再看」，
+        // 偶发 `clicks=0` —— 不是点击没成，是**问得太早**。
+        // 固定 sleep 在这种地方永远只能靠调大，而调大只是把偶发推后。
+        // 这里改成：最多重发 3 轮、每轮轮询 1 秒，读到 clicks>0 就停。
+        let afterCdpClick: { clicks: number; trusted: boolean | null } | undefined;
+        for (let round = 0; round < 3 && !(afterCdpClick && afterCdpClick.clicks > 0); round++) {
+          for (const type of ['mousePressed', 'mouseReleased'] as const) {
+            await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent',
+              { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
+          }
+          for (let i = 0; i < 10; i++) {
+            await sleep(100);
+            afterCdpClick = await inMainWorld(tabId, mainReadTrustProbe);
+            if (afterCdpClick && afterCdpClick.clicks > 0) break;
+          }
         }
-        await sleep(250);
-        const afterCdpClick = await inMainWorld(tabId, mainReadTrustProbe);
         add('L2', '🔴 ③ CDP 合成点击是 isTrusted=true（页面分辨不出）',
           afterCdpClick?.trusted === true,
           `clicks=${afterCdpClick?.clicks} trusted=${afterCdpClick?.trusted}`);

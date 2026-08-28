@@ -201,12 +201,39 @@ export class BerrytraceRelay {
 
   private async _settings(): Promise<RelaySettings> {
     const raw = await chrome.storage.local.get(['btRelayToken', 'btRelayPort', 'btRelayEnabled']);
-    return {
-      token: (raw.btRelayToken as string) ?? null,
-      port: (raw.btRelayPort as number) ?? DEFAULT_RELAY_PORT,
-      // 默认开：装了插件却还要再找个开关打开，等于又加一道安装摩擦。
-      enabled: raw.btRelayEnabled !== false,
-    };
+    const enabled = raw.btRelayEnabled !== false;   // 默认开，见下
+    let token = (raw.btRelayToken as string) ?? null;
+    let port = (raw.btRelayPort as number) ?? DEFAULT_RELAY_PORT;
+
+    // 🔴 **装的时候就配好** —— App 把口令写进了我们自己的插件目录。
+    //
+    // 之前只有一条路：用户在配对页上点一次「允许」，content script 把口令存进
+    // storage。但在「App 用桌面自动化把插件装进浏览器」这条路上，那一下点击
+    // **买不到任何东西** —— 能驱动用户键鼠的程序，自己点一下也毫无难度。
+    // 于是它只剩摩擦：用户刚在设置页开完「浏览器控制」，还要再去浏览器点一次。
+    // （李博 0828：「这个过程，应该就直接配对了吧？」）
+    //
+    // ⚠️ `pairing.json` **不在 `web_accessible_resources` 里**，网页读不到它；
+    //    只有插件自己 `fetch(chrome.runtime.getURL(...))` 拿得到。
+    // ⚠️ 商店安装那条路没有这个文件（目录归浏览器管）⇒ 自然回落到配对页。
+    if (!token) {
+      try {
+        const res = await fetch(chrome.runtime.getURL('pairing.json'));
+        if (res.ok) {
+          const conf = (await res.json()) as { token?: unknown; port?: unknown };
+          if (typeof conf.token === 'string' && conf.token.length >= 16) {
+            token = conf.token;
+            if (typeof conf.port === 'number') port = conf.port;
+            // 存一份：文件可能被后续安装覆盖，而已经连上的会话不该被动。
+            await chrome.storage.local.set({ btRelayToken: token, btRelayPort: port });
+            relayDiag('pairing-from-file', `port=${port}`);
+          }
+        }
+      } catch {
+        // 没这个文件是**正常情况**（商店安装），不是故障，不记 error。
+      }
+    }
+    return { token, port, enabled };
   }
 
   private async _connectLoop(): Promise<void> {
