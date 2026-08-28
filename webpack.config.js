@@ -335,6 +335,28 @@ module.exports = (env, argv) => {
 								const json = JSON.parse(asset.source.source().toString());
 								if (json.background?.service_worker) json.background.service_worker = sw;
 								if (Array.isArray(json.background?.scripts)) json.background.scripts = [sw];
+
+								/**
+								 * 🔴 **版本号也要跟着内容走。**〔0828 实测，Edge 151〕
+								 *
+								 * 光换文件名还不够：Edge 上那条**旧的 SW 注册**指着已经被删掉的
+								 * `background.js`，于是 SW 直接起不来 —— 欢迎页问它，回的是
+								 * `Could not establish connection. Receiving end does not exist.`
+								 * 而**改一下版本号，Edge 当场就重新注册了新 SW**（实测一次就好）。
+								 *
+								 * ⇒ 用 SW 的内容哈希算出第 4 段版本号：
+								 *   · 内容没变 ⇒ 版本不变 ⇒ 不会平白触发一次"更新"；
+								 *   · 内容一变 ⇒ 版本必变 ⇒ 浏览器只能重新注册。
+								 *   这就把「换了插件却还跑旧代码」这条坑从流程里拿掉了 ——
+								 *   在此之前它要靠人去扩展页把插件关掉再打开，而 **Edge 的扩展页
+								 *   连辅助功能树都唤不醒**，那条人工兜底在 Edge 上根本走不通。
+								 *
+								 * ⚠️ 扩展版本号每段是 0~65535 的整数，所以哈希要压到这个范围里。
+								 */
+								const hash = sw.slice('background.'.length, -'.js'.length);
+								const build = parseInt(hash, 16) % 65536;
+								const base = String(json.version || '0.0.0').split('.').slice(0, 3).join('.');
+								json.version = `${base}.${build}`;
 								compilation.updateAsset(
 									'manifest.json',
 									new compiler.webpack.sources.RawSource(JSON.stringify(json, null, '\t')),
