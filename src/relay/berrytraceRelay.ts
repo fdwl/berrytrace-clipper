@@ -102,9 +102,17 @@ export class BerrytraceRelay {
   private _heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private _stopped = false;
 
-  /** 连着没有。宿主那边的 `connected` 是它的镜像，两边判据要一致。 */
+  /**
+   * 连着没有。
+   *
+   * 🔴 **`CONNECTING` 也要算「有连接」**〔0828 实测踩到〕：
+   * 只认 `OPEN` 的话，握手那两三百毫秒里 `connected` 是 false，
+   * 闹钟（30s 一次）或者配对回调只要落在这个窗口里就会**再开一条**。
+   * 宿主那边「后来的顶掉先来的」，于是**在飞的命令当场被拒成 `DISCONNECTED`** ——
+   * 表现是「刚连上就断、一条判据都没跑」，而两边日志都看不出重复连接。
+   */
   get connected(): boolean {
-    return this._ws?.readyState === WebSocket.OPEN;
+    return this._ws?.readyState === WebSocket.OPEN || this._ws?.readyState === WebSocket.CONNECTING;
   }
 
   /**
@@ -159,6 +167,12 @@ export class BerrytraceRelay {
   }
 
   private _open(settings: RelaySettings): void {
+    // 🔴 **重入闸**。这一层有三个地方会叫 `start()`：SW 每次唤醒、配对完成、保活闹钟。
+    // 没有这道闸，它们会各开一条连接 —— 见 `connected` 上面那段。
+    if (this._ws && (this._ws.readyState === WebSocket.OPEN || this._ws.readyState === WebSocket.CONNECTING)) {
+      debugLog('已经有连接了，不重复开');
+      return;
+    }
     const url = `ws://127.0.0.1:${settings.port}/extension?token=${encodeURIComponent(settings.token!)}`;
     let ws: WebSocket;
     try {
