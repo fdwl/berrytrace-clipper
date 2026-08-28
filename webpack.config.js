@@ -191,8 +191,32 @@ module.exports = (env, argv) => {
 		},
 		output: {
 			path: path.resolve(__dirname, outputDir),
-			filename: '[name].js',
+			/**
+			 * 🔴 **service worker 的文件名带内容哈希，其余不带。**
+			 *
+			 * 〔0828 实测，Chrome 151 与 Edge 151 都踩到〕换掉 unpacked 扩展的文件之后，
+			 * 浏览器**照样跑旧的 service worker 脚本**：manifest 会重读（新权限都授予了）、
+			 * 扩展页面也是新的，唯独 SW 是旧的。重启浏览器不管用，
+			 * 在扩展页点「重新加载」也不管用，只有把扩展**关掉再打开**才真换。
+			 * 而 Edge 的扩展页连辅助功能树都唤不醒 —— 那条人工兜底在 Edge 上都走不通。
+			 *
+			 * 现象极难认：宿主看到「扩展连上了、origin 也对」，但它**一句话都不说**。
+			 *
+			 * ⇒ 根治办法是**换掉注册键**：SW 的注册是按**脚本 URL** 记的，
+			 *   文件名一变，浏览器只能重新注册，缓存无从命中。
+			 *   下面那个 `ServiceWorkerFilenamePlugin` 负责把新文件名写回 manifest。
+			 *
+			 * ⚠️ 只给 background 加哈希：其余产物（content.js / popup.js …）
+			 *    要么被 manifest 按固定名引用、要么被 HTML 按固定名引用，改名会牵一串。
+			 */
+			filename: (pathData) =>
+				pathData.chunk?.name === 'background' ? 'background.[contenthash:8].js' : '[name].js',
 			module: false,
+			// 🔴 **必须清目录。** service worker 的文件名带哈希之后，不清的话
+			// 上一次构建那个 `background.<旧哈希>.js` 会留在 dist 里，
+			// 跟着 rsync 装进浏览器 —— 一个没人引用、却长得像正主的文件。
+			// 查问题时它会让人以为「装的是旧包」。
+			clean: true,
 		},
 		// BT_LOWMEM=1 时连 source-map 一起关掉：它和下面的 terser 并行是内存大头，
 		// 在小内存机器上构建会被 OOM kill（exit 137，看着像构建失败，其实是被杀了）。
@@ -288,6 +312,38 @@ module.exports = (env, argv) => {
 			]
 		},
 		plugins: [
+			/**
+			 * 把 manifest 里的 `service_worker` 改成**这次构建真正产出的那个文件名**。
+			 *
+			 * 🔴 存在的理由见上面 `output.filename` 那段注释：SW 的注册按脚本 URL 记，
+			 * 名字不变就可能一直跑缓存里的旧脚本，而且**两边都没有任何报错**。
+			 *
+			 * ⚠️ 时机必须在 CopyPlugin 把 manifest 拷进来**之后** ——
+			 *    所以挂 `PROCESS_ASSETS_STAGE_REPORT`（最后一档）。挂早了读到的是空。
+			 * ⚠️ Firefox 那份用的是 `background.scripts`，形状不同，一并处理。
+			 */
+			new (class ServiceWorkerFilenamePlugin {
+				apply(compiler) {
+					compiler.hooks.thisCompilation.tap('SWFilename', (compilation) => {
+						compilation.hooks.processAssets.tap(
+							{ name: 'SWFilename', stage: compiler.webpack.Compilation.PROCESS_ASSETS_STAGE_REPORT },
+							() => {
+								const sw = Object.keys(compilation.assets)
+									.find((n) => /^background\.[0-9a-f]{8}\.js$/.test(n));
+								const asset = compilation.getAsset('manifest.json');
+								if (!sw || !asset) return;   // 没加哈希 / 没有 manifest：什么都不做
+								const json = JSON.parse(asset.source.source().toString());
+								if (json.background?.service_worker) json.background.service_worker = sw;
+								if (Array.isArray(json.background?.scripts)) json.background.scripts = [sw];
+								compilation.updateAsset(
+									'manifest.json',
+									new compiler.webpack.sources.RawSource(JSON.stringify(json, null, '\t')),
+								);
+							},
+						);
+					});
+				}
+			})(),
 			new CopyPlugin({
 				patterns: [
 					{ 

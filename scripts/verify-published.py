@@ -24,7 +24,13 @@ all_ok &= check('顶层目录是 berrytrace-clipper/（解压后直接可加载�
                 'berrytrace-clipper/manifest.json' in names)
 all_ok &= check('relay-pair.js 在包里', 'berrytrace-clipper/relay-pair.js' in names)
 
-bg = z.read('berrytrace-clipper/background.js').decode('utf-8', 'replace')
+# 🔴 service worker 的文件名**带内容哈希**（见 webpack.config.js 里那段注释：
+# 名字不变，浏览器会一直跑缓存里的旧脚本，而且两边都不报错）。
+# 所以这里不能写死 background.js —— 要按 manifest 指的那个名字去读。
+_manifest = json.loads(z.read('berrytrace-clipper/manifest.json').decode('utf-8'))
+_sw = (_manifest.get('background') or {}).get('service_worker') \
+    or ((_manifest.get('background') or {}).get('scripts') or ['background.js'])[0]
+bg = z.read(f'berrytrace-clipper/{_sw}').decode('utf-8', 'replace')
 all_ok &= check('background.js 里有 BerrytraceRelay', 'BerrytraceRelay' in bg)
 all_ok &= check('background.js 里有配对后重连', 'berrytrace-relay-paired' in bg)
 all_ok &= check('background.js 里有 chrome.debugger 调用', 'chrome.debugger' in bg)
