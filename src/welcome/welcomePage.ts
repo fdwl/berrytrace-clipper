@@ -67,6 +67,7 @@ function wireAutomationGrant(): void {
 	// 这条消息（配对完成那条）本来就会触发重连，拿来当"叫醒"正好。
 	// 副作用只有一次重连，而重连本身是幂等的。
 	try { void chrome.runtime.sendMessage({ type: 'berrytrace-relay-paired' }).catch(() => {}); } catch { /* 没有 runtime 就算了 */ }
+	// 诊断模式下 `wireDiag` 会再叫一次并把原话显示出来，见那边的注释。
 	try {
 		chrome.permissions.contains({ permissions: ['debugger'] })
 			.then(ok => {
@@ -93,6 +94,27 @@ function wireDiag(): void {
 	if (!box) return;
 	if (!new URLSearchParams(location.search).has('diag')) return;
 	box.style.display = 'block';
+	/**
+	 * 叫一次 service worker，把**它的原话**显示出来。
+	 *
+	 * 🔴 这是判「SW 到底起没起来」的唯一办法（用户机器上进不去它的控制台）。
+	 * 起不来时 `sendMessage` 会拒成
+	 * `Could not establish connection. Receiving end does not exist.` ——
+	 * 那句话和「起来了但没跑我们的代码」是**两种完全不同的故障**，
+	 * 而在别的地方它们长得一模一样（都是"连不上"）。
+	 */
+	let swSays = '（还没问）';
+	const askSw = () => {
+		try {
+			chrome.runtime.sendMessage({ type: 'berrytrace-relay-paired' })
+				.then(() => { swSays = '应答了'; })
+				.catch((e: unknown) => { swSays = `拒了：${(e as Error)?.message ?? e}`; });
+		} catch (e) {
+			swSays = `抛了：${(e as Error)?.message ?? e}`;
+		}
+	};
+	askSw();
+
 	const paint = () => {
 		chrome.storage.local.get(['btRelayDiag', 'btRelayToken', 'btRelayPort', 'btRelayEnabled'])
 			.then(raw => {
@@ -100,7 +122,8 @@ function wireDiag(): void {
 				const head = `token=${raw.btRelayToken ? '有' : '无'} port=${raw.btRelayPort ?? '默认'} enabled=${raw.btRelayEnabled !== false}\n`
 					+ `build=${d?.build ?? '-'} swStartedAt=${d?.swStartedAt ?? '-'} updatedAt=${d?.updatedAt ?? '-'} 现在=${Date.now()}\n`
 					// 🔴 计数放在流水前面：流水只有最近 40 条，会被重连刷掉；计数不会。
-					+ `计数=${JSON.stringify(d?.counts ?? {})}\n`;
+					+ `计数=${JSON.stringify(d?.counts ?? {})}\n`
+					+ `SW=${swSays}\n`;
 				const lines = (d?.log ?? []).map(x => `+${x.t - (d?.swStartedAt ?? x.t)}ms ${x.e}${x.d ? ' ' + x.d : ''}`);
 				box.textContent = 'BT-DIAG-BEGIN\n' + head + lines.join('\n') + '\nBT-DIAG-END';
 			})
