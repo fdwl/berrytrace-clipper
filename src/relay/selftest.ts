@@ -172,11 +172,26 @@ async function isDebuggerAttached(tabId: number): Promise<boolean> {
 
 /* ──────────────────── 主流程 ──────────────────── */
 
-export async function runSelfTest(opts: { fixtureBase: string }): Promise<SelfTestReport> {
+/**
+ * @param onCase 每条判据出结果就回调一次。
+ *
+ * 🔴 **这个回调不是锦上添花，是诊断的唯一手段。**〔0828 实测〕
+ * 第一次在李博的 Mac 上跑，连接在自测中途断了，宿主只看到一句
+ * `BROWSER_EXTENSION_DISCONNECTED` —— **断在哪一步完全不知道**，
+ * 而扩展那边的报错停在浏览器里，他的日常浏览器又没有调试端口可以进去看。
+ * 逐条上报之后，「最后一条成功的判据」就是断点的位置。
+ */
+export async function runSelfTest(
+  opts: { fixtureBase: string },
+  onCase?: (c: LaneCase) => void,
+): Promise<SelfTestReport> {
   const cases: LaneCase[] = [];
   const timings: Record<string, number> = {};
-  const add = (lane: LaneCase['lane'], name: string, ok: boolean, detail = '') =>
-    cases.push({ lane, name, ok, detail });
+  const add = (lane: LaneCase['lane'], name: string, ok: boolean, detail = '') => {
+    const c: LaneCase = { lane, name, ok, detail };
+    cases.push(c);
+    try { onCase?.(c); } catch { /* 上报失败不该把自测本身带塌 */ }
+  };
 
   const url = `${opts.fixtureBase}/page?tag=selftest`;
   let tabId: number | null = null;

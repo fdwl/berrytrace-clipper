@@ -237,7 +237,11 @@ export class BerrytraceRelay {
         return;
       }
       if (msg.method === 'berrytrace.selftest') {
-        const report = await runSelfTest((msg.params?.[0] ?? {}) as { fixtureBase: string });
+        const report = await runSelfTest(
+          (msg.params?.[0] ?? {}) as { fixtureBase: string },
+          // 逐条上报：连接万一中途断了，宿主至少知道断在哪一条上。
+          (c) => { try { ws.send(JSON.stringify({ method: 'berrytrace.case', params: [c] })); } catch { /* 断了就断了 */ } },
+        );
         ws.send(JSON.stringify({ id: msg.id, result: report }));
         return;
       }
