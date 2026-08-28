@@ -22,15 +22,40 @@
  */
 
 import '../background';
-import { initBerrytraceRelay } from './berrytraceRelay';
+import { initBerrytraceRelay, relayDiag } from './berrytraceRelay';
 import { initWelcomeOnInstall } from '../welcome/onInstall';
+
+/**
+ * 🔴 **顶层异常要落盘。**〔0828 实测逼出来的〕
+ * service worker 里一个未捕获的异常，在用户机器上是**完全看不见的**：
+ * 他的日常浏览器没有调试端口（Chrome 136 起对默认 profile 忽略
+ * `--remote-debugging-port`），SW 控制台进不去。
+ * 那次的现象是「WebSocket 连上了，然后这个 worker 什么都不做」——
+ * 而分不清是「早死」「消息没到」还是「分派走岔」。落进 storage 之后
+ * `welcome.html?diag=1` 能读出来。
+ */
+self.addEventListener('error', (e: ErrorEvent) => {
+  relayDiag('sw-error', `${e.message} @${e.filename}:${e.lineno}`);
+});
+self.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+  relayDiag('sw-unhandled', String((e.reason as Error)?.message ?? e.reason).slice(0, 200));
+});
 
 // 剪藏和自动化是同一个扩展里的两件事：剪藏是用户看得见、愿意装的功能，
 // 自动化是它搭的车。装一次解决两件事 —— 安装摩擦才是这条线的主要矛盾。
 // 这里只起一个待机的连接器：没配对过就安静待着，不连、不重试、不打日志噪音。
 // Firefox / Safari 上它会自己识别出没有 chrome.debugger 而整个不启用。
+relayDiag('entry-begin');
 initBerrytraceRelay();
+relayDiag('entry-relay-done');
 
 // 首次安装弹欢迎页。**必须在顶层同步注册** —— MV3 的 service worker 装完就被叫起来，
 // `onInstalled` 只发一次；放进任何 await 后面都可能错过它，表现是「装了没弹」且零报错。
-initWelcomeOnInstall();
+try {
+  initWelcomeOnInstall();
+  relayDiag('entry-done');
+} catch (e) {
+  // 欢迎页那一段挂了**绝不能把中继一起带走** —— 它们是两件不相干的事，
+  // 而 MV3 里模块求值抛异常会让整个 worker 起不来。
+  relayDiag('entry-welcome-threw', String((e as Error)?.message ?? e));
+}

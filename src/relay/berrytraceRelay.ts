@@ -114,16 +114,20 @@ let diagFlush: ReturnType<typeof setTimeout> | null = null;
 export function relayDiag(event: string, detail?: string): void {
   diagBuf.push({ t: Date.now(), e: event, d: detail });
   if (diagBuf.length > 40) diagBuf = diagBuf.slice(-40);
-  // 攒一下再写：连上的那一瞬间会连着记好几条，一条一次 storage 写太浪费。
-  if (diagFlush) return;
-  diagFlush = setTimeout(() => {
-    diagFlush = null;
+  const write = () => {
     try {
       void chrome.storage.local.set({
         btRelayDiag: { swStartedAt: SW_STARTED_AT, updatedAt: Date.now(), log: diagBuf },
       });
     } catch { /* storage 写不了也不该把中继带塌 */ }
-  }, 300);
+  };
+  // 🔴 **前 12 条立刻写，不攒。**〔0828 实测逼出来的〕
+  // 原来统一攒 300ms 再写，结果 service worker 在这 300ms 内就没了 ——
+  // **一条日志都没落盘**，于是「worker 早死」和「压根没跑到这儿」在证据上
+  // 完全一样。开头那几条正是最需要看到的，宁可多几次 storage 写。
+  if (diagBuf.length <= 12) { write(); return; }
+  if (diagFlush) return;
+  diagFlush = setTimeout(() => { diagFlush = null; write(); }, 300);
 }
 
 export class BerrytraceRelay {
