@@ -30,6 +30,9 @@
 			<h2>让莓莓印记替你操作这个浏览器</h2>
 			<p class="small text-muted">App 可以在后台标签页里替你跑自动化任务（查资料、填表、取内容），过程中不会抢你的鼠标和键盘。</p>
 			<p id="grant-state" class="small text-muted">正在检查…</p>
+			<!-- 自诊断：`welcome.html?diag=1` 才显示。用户日常那个浏览器没有调试端口，
+			     扩展的 service worker 控制台进不去 —— 这一块是唯一能把内部状态露出来的窗口。 -->
+			<pre id="relay-diag" class="small" style="display:none;white-space:pre-wrap;word-break:break-all;max-height:40vh;overflow:auto"></pre>
 		</section>
 
 		<section class="welcome-steps">

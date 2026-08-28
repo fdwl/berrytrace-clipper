@@ -94,6 +94,38 @@ type HostRpc = { id: number; method: string; params?: unknown[] };
  */
 const SW_STARTED_AT = Date.now();
 
+/**
+ * 中继的**自诊断日志**，落在 `chrome.storage.local.btRelayDiag` 里。
+ *
+ * 🔴 **为什么必须落盘、而不是 console.log**〔0828 实测逼出来的〕：
+ * 用户日常那个浏览器**没有调试端口**（Chrome 136 起 `--remote-debugging-port`
+ * 对默认 profile 直接忽略），扩展的 service worker 控制台**进不去**。
+ * 那次的现象是「宿主看到连上了，但扩展一句话都没说过」——
+ * 而两边的日志都不足以判断是 worker 死了、还是消息压根没到、还是分派走岔了。
+ * 落进 storage 之后，欢迎页 `welcome.html?diag=1` 能把它显示出来，
+ * 于是**用桌面自动化读一张网页**就能看到扩展内部状态。这是这台机器上唯一的窗口。
+ *
+ * 只留最近 40 条，避免把 storage 写胖。
+ */
+type DiagEntry = { t: number; e: string; d?: string };
+let diagBuf: DiagEntry[] = [];
+let diagFlush: ReturnType<typeof setTimeout> | null = null;
+
+export function relayDiag(event: string, detail?: string): void {
+  diagBuf.push({ t: Date.now(), e: event, d: detail });
+  if (diagBuf.length > 40) diagBuf = diagBuf.slice(-40);
+  // 攒一下再写：连上的那一瞬间会连着记好几条，一条一次 storage 写太浪费。
+  if (diagFlush) return;
+  diagFlush = setTimeout(() => {
+    diagFlush = null;
+    try {
+      void chrome.storage.local.set({
+        btRelayDiag: { swStartedAt: SW_STARTED_AT, updatedAt: Date.now(), log: diagBuf },
+      });
+    } catch { /* storage 写不了也不该把中继带塌 */ }
+  }, 300);
+}
+
 export class BerrytraceRelay {
   private _ws: WebSocket | null = null;
   private _connection: RelayConnection | null = null;
@@ -129,6 +161,7 @@ export class BerrytraceRelay {
       return;
     }
     this._stopped = false;
+    relayDiag('start');
     await this._connectLoop();
   }
 
@@ -161,8 +194,10 @@ export class BerrytraceRelay {
     if (!settings.enabled || !settings.token) {
       // 没配对过就安静地待着。**不要在这里重试** —— 配对完成时会显式再调 start()。
       debugLog('自动化中继未配对或已关闭，待机');
+      relayDiag('standby', `enabled=${settings.enabled} hasToken=${!!settings.token}`);
       return;
     }
+    relayDiag('connect-attempt', `port=${settings.port}`);
     this._open(settings);
   }
 
@@ -171,6 +206,7 @@ export class BerrytraceRelay {
     // 没有这道闸，它们会各开一条连接 —— 见 `connected` 上面那段。
     if (this._ws && (this._ws.readyState === WebSocket.OPEN || this._ws.readyState === WebSocket.CONNECTING)) {
       debugLog('已经有连接了，不重复开');
+      relayDiag('open-skipped', `readyState=${this._ws.readyState}`);
       return;
     }
     const url = `ws://127.0.0.1:${settings.port}/extension?token=${encodeURIComponent(settings.token!)}`;
@@ -185,12 +221,14 @@ export class BerrytraceRelay {
 
     ws.onopen = () => {
       debugLog('自动化中继已连上宿主', settings.port);
+      relayDiag('open');
       // 连上就把退避重置掉，否则一次长断线会让后面每次重连都慢 30s。
       this._reconnectDelay = RECONNECT_MIN_MS;
       this._startHeartbeat(ws);
     };
 
-    ws.onclose = () => {
+    ws.onclose = (ev: CloseEvent) => {
+      relayDiag('close', `code=${ev?.code} reason=${ev?.reason ?? ''}`);
       this._stopHeartbeat();
       this._connection = null;
       this._ws = null;
@@ -198,6 +236,7 @@ export class BerrytraceRelay {
     };
 
     ws.onerror = () => {
+      relayDiag('error');
       // onerror 之后一定还会来一次 onclose，重连只挂在 onclose 上，别重复排队。
     };
 
@@ -214,6 +253,7 @@ export class BerrytraceRelay {
       // 宿主的 RPC 走 `{id, method, params}`（跟 RelayConnection 同一种形状，
       // 好让宿主那边共用同一套 _pending 对号）。我们只认自己命名空间下的方法，
       // **别在这里放行 `chrome.*`** —— 那是 RelayConnection 的白名单说了算的。
+      relayDiag('recv', JSON.stringify(msg).slice(0, 120));
       if ('method' in msg && typeof msg.method === 'string' && msg.method.startsWith('berrytrace.')) {
         void this._onHostRpc(msg as HostRpc, ws);
         return;
@@ -350,6 +390,7 @@ export class BerrytraceRelay {
       if (ws.readyState !== WebSocket.OPEN) return;
       try {
         ws.send(JSON.stringify({ type: 'heartbeat', swStartedAt: SW_STARTED_AT }));
+        relayDiag('heartbeat');
       } catch {
         // 发不出去说明已经断了，onclose 会接手重连，这里不必也不该重复处理
       }

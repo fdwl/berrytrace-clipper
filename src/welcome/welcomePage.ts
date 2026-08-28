@@ -70,6 +70,34 @@ function wireAutomationGrant(): void {
 	}
 }
 
+/**
+ * `welcome.html?diag=1`：把中继写在 storage 里的自诊断日志显示出来。
+ *
+ * 🔴 这是**用户机器上唯一能看到扩展内部状态的窗口**：日常浏览器没有调试端口
+ * （Chrome 136 起对默认 profile 忽略 `--remote-debugging-port`），
+ * service worker 控制台进不去。把状态渲染成网页文字之后，
+ * 桌面自动化读一张网页就能拿到它 —— 0828 排查「连上了却一句话不说」时全靠这条。
+ */
+function wireDiag(): void {
+	const box = document.getElementById('relay-diag');
+	if (!box) return;
+	if (!new URLSearchParams(location.search).has('diag')) return;
+	box.style.display = 'block';
+	const paint = () => {
+		chrome.storage.local.get(['btRelayDiag', 'btRelayToken', 'btRelayPort', 'btRelayEnabled'])
+			.then(raw => {
+				const d = raw.btRelayDiag as { swStartedAt?: number; updatedAt?: number; log?: { t: number; e: string; d?: string }[] } | undefined;
+				const head = `token=${raw.btRelayToken ? '有' : '无'} port=${raw.btRelayPort ?? '默认'} enabled=${raw.btRelayEnabled !== false}\n`
+					+ `swStartedAt=${d?.swStartedAt ?? '-'} updatedAt=${d?.updatedAt ?? '-'} 现在=${Date.now()}\n`;
+				const lines = (d?.log ?? []).map(x => `+${x.t - (d?.swStartedAt ?? x.t)}ms ${x.e}${x.d ? ' ' + x.d : ''}`);
+				box.textContent = 'BT-DIAG-BEGIN\n' + head + lines.join('\n') + '\nBT-DIAG-END';
+			})
+			.catch(e => { box.textContent = 'BT-DIAG-BEGIN\n读不到：' + (e as Error)?.message + '\nBT-DIAG-END'; });
+	};
+	paint();
+	window.setInterval(paint, 2000);
+}
+
 function init(): void {
 	remember({ btWelcomeLoadedAt: Date.now() });
 
@@ -83,6 +111,7 @@ function init(): void {
 	}
 
 	wireAutomationGrant();
+	wireDiag();
 
 	const launch = document.getElementById('launch-app') as HTMLAnchorElement | null;
 	const fallback = document.getElementById('launch-fallback');
