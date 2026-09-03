@@ -389,7 +389,15 @@ module.exports = (env, argv) => {
 						from: 'src/_locales',
 						to: '_locales',
 						transform: processLocales
-					}
+					},
+					// MIT 的义务：「上述版权声明和本许可声明应包含在软件的所有副本或
+					// 实质性部分中」。本仓是 Obsidian Web Clipper（MIT © 2024 Obsidian）
+					// 的 fork，构建时按 custom/config.json 改名成 Berrytrace Clipper
+					// （webpack.config.js:52）—— **改名不解除这条义务**。
+					// 在这之前 dist/ 里没有 LICENSE，而 dist/ 就是打包发出去的那份。
+					// ⚠️ `toType: 'file'` 不能省：LICENSE 没有扩展名，CopyPlugin 会把
+					// 无扩展名的目标当**目录**，产出 dist/LICENSE/LICENSE（实测踩过）。
+					{ from: 'LICENSE', to: 'LICENSE', toType: 'file' }
 				],
 			}),
 			new MiniCssExtractPlugin({
