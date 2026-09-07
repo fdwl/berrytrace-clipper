@@ -35,20 +35,17 @@ export interface RecordingStateView {
 export interface ToolbarHandlers {
   onMark(): void;
   onStop(): void;
-  onAnnotate(target: ElementSnapshot, intent: string, note: string): void;
+  onAnnotate(target: ElementSnapshot): void;
 }
 
-/**
- * 四个意图，**措辞与宿主那张卡一致**（规划 7.3 第 6 屏：两张卡必须长得一模一样）。
- * 那边的原本在 `src/views/recording/annotate-tools.ts` 的 ANNOTATION_INTENTS。
- * 这是**文案**的副本，不是判据的副本 —— 判据一律留在宿主。
+/*
+ * 🔴 0907 第八轮删掉了那张"这块是什么"的卡（四个意图 + 一句说明）。
+ * 李博：「完成标注按钮点击，会出现一个补充信息，**这个完全没必要了，
+ * 这个逻辑要删除**」。桌面那张同批删了，两边一起。
+ *
+ * ⇒ 拾到元素**就是存**，这一跳只报定位。
+ * 顺带解掉一笔登记过的债：那份措辞在宿主仓有一份副本，而没有任何闸门比对它们。
  */
-const INTENTS: Array<{ intent: string; label: string; hint: string }> = [
-  { intent: 'extract', label: '我要这块数据', hint: '这块内容就是我要的产物（列表、表格、某个值）' },
-  { intent: 'reference', label: '参考', hint: '这一步为什么这么做' },
-  { intent: 'validation', label: '校验', hint: '跑完要满足这个条件' },
-  { intent: 'other', label: '其他', hint: '就是想标一下' },
-];
 
 const SVG = {
   crosshair: '<circle cx="12" cy="12" r="9"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>',
@@ -122,43 +119,6 @@ button.tool svg { width: 15px; height: 15px; }
 }
 
 /* 标注卡：与宿主编辑器里那张同形（244 宽、圆角 12、第一项占满一行） */
-.card {
-  position: fixed; top: 48px; left: 50%; transform: translateX(-50%);
-  z-index: 2147483647; width: 244px;
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 8px; border-radius: 12px;
-  background: rgb(28 28 30 / 0.97);
-  border: 1px solid rgb(255 255 255 / 0.16);
-  box-shadow: 0 10px 30px rgb(0 0 0 / 0.5);
-  color: rgb(255 255 255 / 0.92); font-size: 12px;
-}
-.card .title { font-weight: 600; padding: 0 2px; }
-.card .what {
-  padding: 0 2px; color: rgb(255 255 255 / 0.6);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.card input {
-  width: 100%; padding: 5px 8px; border-radius: 8px;
-  border: 1px solid rgb(255 255 255 / 0.18);
-  background: rgb(255 255 255 / 0.06); color: rgb(255 255 255 / 0.95);
-  font-size: 12px; outline: none; user-select: text; -webkit-user-select: text;
-}
-.card input::placeholder { color: rgb(255 255 255 / 0.4); }
-.card input:focus { border-color: rgb(10 132 255 / 0.9); }
-.card .picks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.card .picks button {
-  appearance: none; -webkit-appearance: none; margin: 0;
-  padding: 6px 8px; border-radius: 8px;
-  border: 1px solid rgb(255 255 255 / 0.16);
-  background: rgb(255 255 255 / 0.06); color: rgb(255 255 255 / 0.92);
-  font-size: 12px; cursor: pointer;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.card .picks button:hover { background: rgb(255 255 255 / 0.14); }
-.card .picks button:first-child {
-  grid-column: 1 / -1; font-weight: 600;
-  background: rgb(10 132 255 / 0.85); border-color: rgb(10 132 255 / 0.9);
-}
 .hidden { display: none !important; }
 `;
 
@@ -209,25 +169,7 @@ export class RecordToolbar {
         <button class="tool stop" data-act="stop" title="结束这次录制">${icon(SVG.stop)}</button>
       </div>
       <div class="hl hidden"></div>
-      <div class="tip hidden">点一下你要标的东西（Esc 取消）</div>
-      <div class="card hidden">
-        <div class="title">这块是什么？</div>
-        <div class="what"></div>
-        <input placeholder="一句话说明（可不填）" maxlength="120" />
-        <div class="picks"></div>
-      </div>`;
-
-    const picks = this.root.querySelector('.picks') as HTMLElement;
-    for (const it of INTENTS) {
-      const b = document.createElement('button');
-      b.textContent = it.label;
-      b.title = it.hint;
-      b.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.commitAnnotation(it.intent);
-      });
-      picks.appendChild(b);
-    }
+      <div class="tip hidden">点一下你要标的东西（Esc 取消）</div>`;
 
     this.root.querySelector('.bar')?.addEventListener('click', (e) => {
       const btn = (e.target as HTMLElement | null)?.closest?.('button.tool') as HTMLElement | null;
@@ -373,7 +315,7 @@ export class RecordToolbar {
     if (!el) return;
     this.picked = snapshotElement(el);
     this.stopPick();
-    this.openCard(el);
+    this.commitAnnotation();
   };
 
   private readonly onPickKey = (e: KeyboardEvent): void => {
@@ -383,28 +325,15 @@ export class RecordToolbar {
     this.stopPick();
   };
 
-  // ── 标注卡（第 6 屏）──────────────────────────────────────────────────────
-
-  private openCard(el: Element): void {
-    const card = this.root?.querySelector('.card') as HTMLElement | null;
-    if (!card) return;
-    const what = card.querySelector('.what') as HTMLElement;
-    const label = this.picked?.ariaLabel ?? this.picked?.text ?? this.picked?.tag ?? '';
-    what.textContent = label ? `${el.tagName.toLowerCase()} · ${label}` : el.tagName.toLowerCase();
-    const input = card.querySelector('input') as HTMLInputElement;
-    input.value = '';
-    card.classList.remove('hidden');
-    // 下一帧再聚焦：这一帧里那次 click 的收尾还会把焦点交给点击目标，
-    // 当场 focus 会被它顶掉（宿主那侧的文字输入框踩过同一个坑）
-    window.requestAnimationFrame(() => input.focus());
-  }
-
-  private commitAnnotation(intent: string): void {
-    const card = this.root?.querySelector('.card') as HTMLElement | null;
-    const input = card?.querySelector('input') as HTMLInputElement | null;
+  /**
+   * 拾到了 —— **直接交上去**（第八轮起中间没有那张卡了）。
+   *
+   * ⚠️ `picked` 交出去之后必须清空：不清的话下一次拾取前的任何一次误触
+   * 都会把**上一个**元素再报一遍，而两条事件长得一模一样，没人分得出来。
+   */
+  private commitAnnotation(): void {
     const target = this.picked;
     this.picked = null;
-    card?.classList.add('hidden');
-    if (target) this.h.onAnnotate(target, intent, (input?.value ?? '').trim());
+    if (target) this.h.onAnnotate(target);
   }
 }

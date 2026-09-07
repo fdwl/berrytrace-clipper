@@ -47,9 +47,9 @@ function main(): void {
   const toolbar = new RecordToolbar({
     onMark: () => { void send('berrytrace-recording-mark', undefined); },
     onStop: () => { void send('berrytrace-recording-stop', undefined); },
-    onAnnotate: (target, intent, note) => {
+    onAnnotate: (target) => {
       void send('berrytrace-recording-annotate', {
-        target, intent, note: note || undefined,
+        target,
         url: location.href, title: document.title,
         /*
          * 🔴 `visible-only`：我们标到的是**这一个元素**，而它未必装得下全部。
