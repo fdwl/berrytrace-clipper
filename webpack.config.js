@@ -7,6 +7,39 @@ const package = require('./package.json');
 const webpack = require('webpack');
 const TerserPlugin = require('terser-webpack-plugin');
 
+/**
+ * 中继这一层的**构建标记**。宿主拿它回答一个问题：
+ * **「浏览器里此刻跑着的，和磁盘上装着的，是同一份代码吗？」**
+ *
+ * 🔴 这个数**必须是算出来的，不能是手写的**。〔0907 第九轮实测〕原来它是
+ * `berrytraceRelay.ts` 里一行手敲的字面量 `BT-RELAY-CAPABLE:0828-paired-truth`，
+ * 从 8/28 起就没人记得改 —— 于是 9/7 装了新包之后，宿主读到的磁盘标记和
+ * 浏览器报上来的标记**一模一样**，判据在，却分辨不出新旧
+ * （CLAUDE.md 六点六⑤：好坏两种实现算出同一个结果）。
+ * 后果是李博那台 Chrome 一直跑着 8 月那个 service worker，
+ * 而"录制时页面上没有工具条"在任何一层都查不出原因。
+ *
+ * 取 `src/relay/` 整棵树的内容哈希：**代码没变就不换标记**（不会白白重载
+ * 用户的浏览器），改了就一定换（宿主一定看得见）。
+ */
+function relayBuildStamp() {
+	const dir = path.resolve(__dirname, 'src/relay');
+	const h = require('crypto').createHash('sha256');
+	const walk = (d) => {
+		for (const name of fs.readdirSync(d).sort()) {
+			const full = path.join(d, name);
+			const st = fs.statSync(full);
+			if (st.isDirectory()) walk(full);
+			// 测试文件不进产物，让它参与哈希只会造出"改了测试也要重载一次浏览器"
+			else if (!name.endsWith('.test.ts')) { h.update(name); h.update(fs.readFileSync(full)); }
+		}
+	};
+	walk(dir);
+	const d = new Date();
+	const 日 = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+	return `${日}-${h.digest('hex').slice(0, 8)}`;
+}
+
 const customConfigPath = path.resolve(__dirname, 'custom/config.json');
 const customConfig = fs.existsSync(customConfigPath) ? require(customConfigPath) : null;
 
@@ -418,7 +451,16 @@ module.exports = (env, argv) => {
 			},
 			new webpack.DefinePlugin({
 				'process.env.NODE_ENV': JSON.stringify(argv.mode),
-				'DEBUG_MODE': JSON.stringify(!isProduction)
+				'DEBUG_MODE': JSON.stringify(!isProduction),
+				/*
+				 * 🔴 替换出来的**必须是一个完整的字符串字面量**。
+				 * 宿主是拿 `code.indexOf('BT-RELAY-CAPABLE:')` 再往后切
+				 * （`extension-installer.ts` 的 inspectRelayCapability）——
+				 * 拼出来的话产物里留下的是拼接代码，宿主认得出"有中继"、
+				 * 认不出是哪一版。DefinePlugin 是文本替换，所以这里是安全的；
+				 * 别在源码里改回模板串。
+				 */
+				'BT_RELAY_MARK': JSON.stringify(`BT-RELAY-CAPABLE:${relayBuildStamp()}`)
 			}),
 			...(isProduction ? [
 				new ZipPlugin({

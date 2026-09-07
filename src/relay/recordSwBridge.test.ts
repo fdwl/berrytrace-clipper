@@ -18,6 +18,7 @@ import {
   onHostRecordingState,
   onRelayConnectedForRecording,
   recordingStats,
+  tabsNeedingInjection,
   type RecordingStateView,
 } from './recordSwBridge';
 
@@ -31,6 +32,8 @@ const 录制中: RecordingStateView = {
 let 消息监听: 监听器 | null = null;
 let 标签更新监听: ((id: number, info: { url?: string }, tab: { title?: string }) => void) | null = null;
 let 发给标签的: Array<{ tabId: number; msg: unknown }> = [];
+/** 补注入打到了哪几个标签页上（见 tabsNeedingInjection） */
+let 注入过的: number[] = [];
 let 发给宿主的: Array<{ method: string; params: unknown[] }> = [];
 let 宿主怎么回: (method: string, params: unknown[]) => unknown = () => ({ ok: true });
 let 宿主通不通 = true;
@@ -39,15 +42,21 @@ function 装假的chrome() {
   消息监听 = null;
   标签更新监听 = null;
   发给标签的 = [];
+  注入过的 = [];
   (globalThis as unknown as { chrome: unknown }).chrome = {
     runtime: {
       lastError: undefined,
       onMessage: { addListener: (fn: 监听器) => { 消息监听 = fn; } },
     },
     tabs: {
-      query: (_q: unknown, cb: (t: Array<{ id: number }>) => void) => cb([{ id: 1 }, { id: 2 }]),
+      // 一个普通网页 + 一个注入不进去的设置页 —— 后者是判据的对照组
+      query: (_q: unknown, cb: (t: Array<{ id: number; url: string }>) => void) =>
+        cb([{ id: 1, url: 'https://例子.test/' }, { id: 2, url: 'chrome://settings' }]),
       sendMessage: (tabId: number, msg: unknown, cb?: () => void) => { 发给标签的.push({ tabId, msg }); cb?.(); },
       onUpdated: { addListener: (fn: typeof 标签更新监听) => { 标签更新监听 = fn; } },
+    },
+    scripting: {
+      executeScript: (o: { target: { tabId: number } }) => { 注入过的.push(o.target.tabId); return Promise.resolve([]); },
     },
   };
 }
@@ -101,6 +110,58 @@ describe('宿主推来新状态', () => {
     onHostRecordingState(null);
     expect(发给标签的).toHaveLength(2);
     expect((发给标签的[0].msg as { state: unknown }).state).toBeNull();
+  });
+});
+
+/*
+ * 0907 第九轮，李博实机：「浏览器，对于**已经打开的页面**，没有工具条。」
+ * 根因不在这条链的任何一跳上，而在 manifest 的语义：`content_scripts`
+ * 只对**此后加载**的页面生效。开始录制那一刻已经开着的标签页里一个字节都没有。
+ */
+describe('已经开着的标签页要补注入', () => {
+  it('🔴 挑得出该注入的：http(s) 才注入，设置页那种一律跳过', () => {
+    expect(tabsNeedingInjection([
+      { id: 1, url: 'https://例子.test/a' },
+      { id: 2, url: 'http://例子.test/b' },
+      { id: 3, url: 'chrome://settings' },
+      { id: 4, url: 'chrome-extension://abc/x.html' },
+      { id: 5 },                       // 还没成形的标签，没有 url
+      { url: 'https://没有id.test/' },  // 没有 id 就发不出去
+    ])).toEqual([1, 2]);
+  });
+
+  it('🔴 从「没在录」翻成「在录」的那一下扫一遍', () => {
+    onHostRecordingState(录制中);
+    expect(注入过的, '普通网页要补上，chrome:// 那个不许打').toEqual([1]);
+  });
+
+  it('🔴 已经在录了，后面每次状态推送**不再扫** —— 角标一变就是一次推送，每次都扫会把浏览器拖卡', () => {
+    onHostRecordingState(录制中);
+    注入过的 = [];
+    onHostRecordingState({ ...录制中, steps: 1 });
+    onHostRecordingState({ ...录制中, steps: 2 });
+    expect(注入过的).toEqual([]);
+  });
+
+  it('🔴 停了再开，要再扫一遍 —— 中间他多半又开了几个标签页', () => {
+    onHostRecordingState(录制中);
+    onHostRecordingState(null);
+    注入过的 = [];
+    onHostRecordingState(录制中);
+    expect(注入过的).toEqual([1]);
+  });
+
+  it('🔴 worker 被回收后重起来、问回来已经在录 ⇒ 也要扫（对照：问回来没在录就不扫）', async () => {
+    宿主怎么回 = () => 录制中;
+    onRelayConnectedForRecording();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(注入过的).toEqual([1]);
+
+    装假的chrome();
+    installRecordingSwBridge({ sendToHost: async () => null });
+    onRelayConnectedForRecording();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(注入过的, '没在录就不该动用户的标签页').toEqual([]);
   });
 });
 

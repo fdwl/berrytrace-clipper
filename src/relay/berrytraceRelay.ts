@@ -161,14 +161,24 @@ if (typeof chrome !== 'undefined' && chrome.tabs?.onActivated) {
  * 🔴 **必须是一个完整的字面量，不能拼**〔0828 当场撞到〕：
  *   头一版写的是 `` `BT-RELAY-CAPABLE:${RELAY_BUILD}` ``，产物里原样留着那个模板
  *   （这份 webpack 配置不做常量内联），于是宿主认得出"有中继"、**认不出是哪一版**。
- *   所以反过来：这一行是正本，构建标记从它身上切下来。
  *
  * 🔴 它还必须**被真的用掉**（下面 `relayDiag('start', …)`），否则压缩器会把它整段消掉，
  *   而那时磁盘上的判据就凭空消失了 —— 一个零报错的失效。
+ *
+ * ── 0907 第九轮：这一行从"手敲"改成"算出来" ──────────────────────────────
+ * 原来这里是一行写死的 `BT-RELAY-CAPABLE:0828-paired-truth`，靠"改了代码就顺手
+ * 往前挪一格"维持。**从 8/28 起就没人挪过。** 于是 9/7 装上新包之后，
+ * 磁盘上的标记和浏览器报上来的标记一模一样 —— 判据在、却分辨不出新旧
+ * （CLAUDE.md 六点六⑤），而李博那台 Chrome 一直跑着 8 月那个 service worker。
+ *
+ * 现在它由 webpack 的 DefinePlugin 按 `src/relay/` 的内容哈希算出来
+ * （`webpack.config.js` 的 `relayBuildStamp`）。**这里不许写兜底表达式**：
+ * 兜底那个字面量会先出现在压缩产物里，宿主 `indexOf` 会切到它。
  */
-const RELAY_CAPABILITY_MARK = 'BT-RELAY-CAPABLE:0828-paired-truth';
+declare const BT_RELAY_MARK: string;
+const RELAY_CAPABILITY_MARK = BT_RELAY_MARK;
 
-/** 构建标记。改这一层的代码就把上面那行往前挪一格 —— 宿主用它认人，见 `_open` 里的注释。 */
+/** 构建标记。宿主用它认人（见 `_open` 里的注释），也用它判"浏览器跑的是不是磁盘这一份"。 */
 const RELAY_BUILD = RELAY_CAPABILITY_MARK.slice('BT-RELAY-CAPABLE:'.length);
 
 /**
@@ -796,6 +806,51 @@ export class BerrytraceRelay {
           }),
         });
         ws.send(JSON.stringify({ id: msg.id, result: hit?.result ?? null }));
+        return;
+      }
+      if (msg.method === 'berrytrace.recordingProbe') {
+        /*
+         * ── 「我的浏览器里到底有没有那条工具条」──────────────────────────
+         *
+         * 🔴 这条 RPC 存在的理由：李博 0907 **连报两轮**「录制中打开浏览器
+         * 没有工具条」，而这一跳在两轮里都**没有任何可观察点** ——
+         * 页面上没有、宿主日志里没有、service worker 控制台他进不去
+         * （Chrome 136 起对默认 profile 忽略 remote-debugging-port）。
+         * 于是每一轮都只能靠推理，两轮的根因还不一样
+         * （第一轮：包没装；第二轮：包装了但浏览器跑着旧的 service worker）。
+         *
+         * 它回答的是**终点**那个问题（CLAUDE.md 六点七：不问"调到了吗"，
+         * 问"走的是哪条路"）：每一个标签页上，那个宿主 div 在不在。
+         *
+         * ⚠️ 用 `world: 'MAIN'` 只读 DOM，**不注入 content script** ——
+         * 探针顺手把 bug 修好的话，它就永远看不见这个 bug 了。
+         */
+        const tabs = await chrome.tabs.query({});
+        const out: Array<{ id: number; url: string; title: string; 挂上了: boolean | null }> = [];
+        for (const t of tabs) {
+          if (typeof t.id !== 'number') continue;
+          if (!/^https?:/i.test(t.url ?? '')) continue;
+          let 挂上了: boolean | null = null;
+          try {
+            const [hit] = await chrome.scripting.executeScript({
+              target: { tabId: t.id },
+              world: 'MAIN',
+              func: () => !!document.querySelector('[data-berrytrace-recording]'),
+            });
+            挂上了 = hit?.result === true;
+          } catch {
+            // 注入不进去（受保护的页、正在崩的标签）。**null 不是 false** ——
+            // "没挂上"和"问不出来"是两件事，混成一个的话下游会去修不存在的 bug
+            挂上了 = null;
+          }
+          out.push({
+            id: t.id,
+            url: (t.url ?? '').slice(0, 160),
+            title: (t.title ?? '').slice(0, 80),
+            挂上了,
+          });
+        }
+        ws.send(JSON.stringify({ id: msg.id, result: { build: RELAY_BUILD, tabs: out } }));
         return;
       }
       if (msg.method === 'berrytrace.selftest') {

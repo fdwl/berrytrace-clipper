@@ -8,7 +8,9 @@
  *   ② 页面新开时问「在录吗」，直接用缓存回答（宿主没连上时如实回 null）；
  *   ③ 把页面上的点击/输入/滚动/标注/打点/停止转给宿主；
  *   ④ **导航自己认**（tabs.onUpdated）—— content script 在导航那一刻正好被换掉，
- *      它自己报不了自己的离开。
+ *      它自己报不了自己的离开；
+ *   ⑤ **给已经开着的标签页补注入**（见 {@link tabsNeedingInjection}）——
+ *      manifest 里的 content_scripts 只管"之后加载的页面"。
  *
  * ── 🔴 缓存为什么必须在这一层 ─────────────────────────────────────────────
  * 不缓存的话，每开一个标签都要往宿主问一趟；而 MV3 的 worker 随时会被回收，
@@ -57,6 +59,64 @@ export function recordingStats(): { sent: number; refused: number; failed: numbe
 }
 
 /**
+ * 这些标签页需要**补注入**一次 `relay-record.js`。
+ *
+ * ── 🔴 这条判据存在的理由（0907 第九轮，李博实机）────────────────────────
+ * 「浏览器，对于**已经打开的页面**，没有工具条。」
+ *
+ * manifest 里的 `content_scripts` 只对**此后加载**的页面生效。用户按下开始录制
+ * 那一刻已经开着的那十几个标签页，里面**一个字节的脚本都没有** ——
+ * 它们既不会问"在录吗"，也收不到广播（`sendMessage` 那边没人接）。
+ * 于是他切过去，看到的是什么都没有；而这一跳**全程零报错**：
+ * 广播那边的 lastError 本来就当常态吞掉了（chrome:// 页面天天在置它）。
+ *
+ * ⚠️ 只挑 http/https。chrome:// 、扩展页、应用商店注入一律被系统拒绝，
+ * 拒绝会以 lastError 的形式散在每一次补注入里，把真正的失败盖掉。
+ * ⚠️ 重复注入是安全的：`recordContentScript.ts` 顶上那个 `__berrytraceRecordingInstalled`
+ * 标记会让第二份当场返回。**但那是页面那侧兜的**，不是这里可以不管 ——
+ * 兜不住的那天（比如标记改名）表现是一个页面上挂两条工具条。
+ */
+export function tabsNeedingInjection(
+  tabs: ReadonlyArray<{ id?: number; url?: string }>,
+): number[] {
+  const out: number[] = [];
+  for (const t of tabs) {
+    if (typeof t.id !== 'number') continue;
+    if (typeof t.url !== 'string' || !/^https?:\/\//i.test(t.url)) continue;
+    out.push(t.id);
+  }
+  return out;
+}
+
+/**
+ * 往已经开着的标签页里补一次。
+ *
+ * 🔴 **只在"从没在录变成在录"时扫一遍**，不是每次状态推送都扫：
+ * 角标数字一变就是一次推送，一秒钟能来好几次 —— 每次都去 executeScript
+ * 的话，用户机器上会有几十个标签页同时被注入，浏览器当场卡一下，
+ * 而"录制让我的浏览器变卡"是这条功能被关掉的最快理由。
+ */
+function sweepInjectExisting(): void {
+  try {
+    chrome.tabs.query({}, (tabs) => {
+      void chrome.runtime.lastError;
+      for (const id of tabsNeedingInjection(tabs as Array<{ id?: number; url?: string }>)) {
+        try {
+          const r = chrome.scripting.executeScript({
+            target: { tabId: id },
+            files: ['relay-record.js'],
+          }) as unknown as Promise<unknown> | undefined;
+          // 拒绝是常态（受保护的页面、正在崩溃的标签），一条都不该打日志
+          if (r && typeof (r as Promise<unknown>).catch === 'function') {
+            void (r as Promise<unknown>).catch(() => {});
+          }
+        } catch { /* 这一个注入不进去，不影响别的 */ }
+      }
+    });
+  } catch { /* 没有 scripting 权限 / 上下文没了。下一次开始录制再说 */ }
+}
+
+/**
  * 把状态发给每一个标签页。
  *
  * ⚠️ `sendMessage` 对没有 content script 的标签（chrome:// 之类）会置 lastError，
@@ -81,8 +141,11 @@ function broadcast(state: RecordingStateView | null): void {
 
 /** 宿主推来一份新状态。**缓存 + 广播**，这是页面亮起来的唯一来源 */
 export function onHostRecordingState(state: RecordingStateView | null): void {
-  cached = state && state.show ? state : state;
-  broadcast(cached);
+  const 之前 = cached?.show === true
+  cached = state
+  broadcast(cached)
+  // 从"没在录"翻成"在录"的那一下，把已经开着的标签页补上（见 tabsNeedingInjection）
+  if (!之前 && cached?.show === true) sweepInjectExisting()
 }
 
 /**
@@ -96,8 +159,16 @@ export async function helloHost(): Promise<void> {
   if (!channel) return;
   try {
     const s = (await channel.sendToHost(RECORDING_RPC.hello, [])) as RecordingStateView | null;
+    const 之前 = cached?.show === true;
     cached = s ?? null;
     broadcast(cached);
+    /*
+     * 🔴 worker 刚起来（MV3 随时回收）时缓存是空的，而录制可能已经在跑了 ——
+     * 这一趟问回来的 show:true 对**所有**已经开着的标签页都是"补注入"的信号，
+     * 不只是对新开的那个。少了这一句，worker 被回收一次之后，
+     * 用户切回旧标签页看到的还是什么都没有。
+     */
+    if (!之前 && cached?.show === true) sweepInjectExisting();
   } catch {
     /* 宿主没起来 / 中继没连上。保持现状，等下一次推送 */
   }

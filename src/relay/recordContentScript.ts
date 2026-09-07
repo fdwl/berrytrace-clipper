@@ -31,17 +31,64 @@ import type { WebInteraction } from './recordSnapshot';
 import { mayReadValue, snapshotElement } from './recordSnapshot';
 import { RecordToolbar, type RecordingStateView } from './recordToolbar';
 
-/** 同一个页面只装一次。扩展重载 / 手工再注入时不至于挂两条 */
+/**
+ * 同一个页面只装一份。
+ *
+ * ── 🔴 它不能是一个布尔（0907 第九轮，真浏览器里当场量到的）───────────────
+ * 头一版写的是 `if (w[FLAG]) return`。**扩展一重载，这个页面就再也装不上了**：
+ * · `chrome.runtime.reload()` 之后，页面里那份 content script **不会被卸掉**，
+ *   它变成一个"孤儿" —— JS 还在跑、监听器还在、DOM 还在，
+ *   但它手上的 `chrome.*` 已经失效（`Extension context invalidated`）。
+ * · 于是那个布尔还是 `true`，补注入进来的新一份当场 return，
+ *   而孤儿那份**永远收不到任何消息**了。用户看到的是：装了新插件、
+ *   重载过了、页面上还是什么都没有 —— **和"根本没装"一模一样**。
+ *
+ * 所以标记里放的是一对函数：新来的那份先问「你还活着吗」。
+ * 活着就让位（真的重复注入），死了就叫它把自己的 DOM 收掉，然后接手。
+ *
+ * ⚠️ 「活着」只能由**它自己的闭包**去问 —— 孤儿手上的 `chrome` 引用才是失效的
+ * 那一个。新来的这份问自己的 `chrome` 永远是活的，那不成其为判据。
+ */
 const FLAG = '__berrytraceRecordingInstalled';
-type Flagged = Window & { [FLAG]?: boolean };
+export interface 装着的 { 活着(): boolean; 拆(): void }
+type Flagged = Window & { [FLAG]?: 装着的 | boolean };
+
+/**
+ * 页面上已经有一份了，这一份该怎么办。
+ *
+ * 判定抠出来是因为**探测取决于浏览器**（扩展有没有被重载、孤儿的 chrome
+ * 失效了没有），而判定不该取决于浏览器：`chrome.runtime.reload()` 在无头
+ * 浏览器里根本复现不出来（实测：重载之后扩展的 service worker 再也没起来，
+ * 等 150 秒也不回来），而它在真浏览器里是天天发生的事。
+ * CLAUDE.md 六点六④。
+ */
+export function 该接手吗(上一份: 装着的 | boolean | undefined): 'take' | 'yield' | 'evict' {
+  // 干净的页面
+  if (!上一份) return 'take';
+  /*
+   * 旧版留下的布尔。它分辨不出死活 —— 但页面上此刻确实有一份（可能是孤儿）。
+   * 保守按"活着"处理：这条只在"旧 content script + 新注入"这个过渡组合里
+   * 走得到，而且下一次页面刷新就没有了。
+   */
+  if (上一份 === true) return 'yield';
+  // 真的还活着 ⇒ 这一次是重复注入
+  if (上一份.活着()) return 'yield';
+  // 孤儿：扩展刚换过代码，它再也收不到任何消息了 ⇒ 让它收干净，这一份接手
+  return 'evict';
+}
 
 /** 滚动上报的节流。太密的话一次滚轮能产出几十条，把事件流冲垮 */
 const SCROLL_IDLE_MS = 400;
 
 function main(): void {
   const w = window as Flagged;
-  if (w[FLAG]) return;
-  w[FLAG] = true;
+  const 上一份 = w[FLAG];
+  const 怎么办 = 该接手吗(上一份);
+  if (怎么办 === 'yield') return;
+  if (怎么办 === 'evict') {
+    // 孤儿：让它把自己的 DOM 和监听器收干净，再接手
+    try { (上一份 as 装着的).拆(); } catch { /* 孤儿拆自己时出错不该拦住新的这一份 */ }
+  }
 
   let capturing = false;
   const toolbar = new RecordToolbar({
@@ -61,6 +108,25 @@ function main(): void {
       });
     },
   });
+
+  /*
+   * 把"我在这儿，而且我还活着吗"登记上。
+   * 🔴 `活着()` 问的是**这一份自己**手上的 chrome：扩展重载之后，
+   * 孤儿这一份读 `chrome.runtime.id` 会拿到 undefined 或直接抛。
+   */
+  w[FLAG] = {
+    活着: () => {
+      try {
+        return typeof chrome !== 'undefined' && !!chrome.runtime?.id;
+      } catch {
+        return false;
+      }
+    },
+    拆: () => {
+      toolbar.unmount();
+      setCapturing(false);
+    },
+  };
 
   // ── 与 service worker 的一问一答 ──────────────────────────────────────────
 
