@@ -132,6 +132,18 @@ async function forward(method: string, payload: unknown): Promise<unknown> {
  */
 export function installRecordingSwBridge(ch: HostChannel): void {
   channel = ch;
+  /*
+   * 🔴 装上 = **这个 worker 刚起来**，所以缓存从零开始。
+   * MV3 里 worker 被回收之后一切内存状态都没了；留着上一条命的缓存
+   * 会让新起来的 worker 用一个可能早就过期的状态去回答页面
+   * （"在录吗"——它答"在"，而录制半小时前就停了）。
+   * 补上的那一手不在这个函数里：中继一连上就会调
+   * {@link onRelayConnectedForRecording} 去现问一次。
+   */
+  cached = null;
+  stats.sent = 0;
+  stats.refused = 0;
+  stats.failed = 0;
 
   chrome.runtime.onMessage.addListener((msg: { type?: string; payload?: unknown }, _sender, sendResponse) => {
     const type = msg?.type;
