@@ -39,6 +39,13 @@
  */
 
 import { RelayConnection, debugLog } from './relayConnection';
+import {
+  RECORDING_RPC,
+  installRecordingSwBridge,
+  onHostRecordingState,
+  onRelayConnectedForRecording,
+  type RecordingStateView,
+} from './recordSwBridge';
 import { runSelfTest } from './selftest';
 
 /** 宿主 App 监听的默认端口。可被设置覆盖 —— 端口撞车是常态，不是异常。 */
@@ -237,6 +244,15 @@ export function relayDiag(event: string, detail?: string): void {
 
 export class BerrytraceRelay {
   private _ws: WebSocket | null = null;
+  /**
+   * **我们发给宿主**的请求在等应答（录制那条线用）。
+   *
+   * 🔴 id 从一百万起跳，和宿主发过来的那套 id 分开。两套 id 其实不会真的撞
+   * （各自只在**收到应答**时去自己的表里对号，方向天然分开），
+   * 但混在一个日志里没法读 —— 一眼看不出这条 5 号是谁发的。
+   */
+  private _hostPending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  private _hostNextId = 1_000_000;
   private _connection: RelayConnection | null = null;
   private _reconnectDelay = RECONNECT_MIN_MS;
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -254,6 +270,48 @@ export class BerrytraceRelay {
    */
   get connected(): boolean {
     return this._ws?.readyState === WebSocket.OPEN || this._ws?.readyState === WebSocket.CONNECTING;
+  }
+
+  /**
+   * **我们**向宿主发一条 RPC 并等应答（与宿主发给我们的那套形状一致：
+   * `{id, method, params}` 去，`{id, result|error}` 回）。
+   *
+   * 🔴 没连上就**当场拒**，不排队等重连。排队的话用户在页面上点一下，
+   * 十几秒后才悄悄生效（或者连上时一口气补发一堆早就过时的事件）——
+   * 录制要的是"现在这一下有没有被记下来"，晚到的记录比没有更糟。
+   */
+  sendToHost(method: string, params: unknown[], timeoutMs = 8000): Promise<unknown> {
+    const ws = this._ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error('RELAY_NOT_CONNECTED'));
+    }
+    const id = ++this._hostNextId;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._hostPending.delete(id);
+        reject(new Error(`RELAY_TIMEOUT: ${method}`));
+      }, timeoutMs);
+      this._hostPending.set(id, { resolve, reject, timer });
+      try {
+        ws.send(JSON.stringify({ id, method, params }));
+      } catch (e) {
+        clearTimeout(timer);
+        this._hostPending.delete(id);
+        reject(e as Error);
+      }
+    });
+  }
+
+  /** 这条消息是我们某次 `sendToHost` 的应答吗。是就消化掉并回 true */
+  private _resolveHostReply(msg: { id?: unknown; result?: unknown; error?: unknown }): boolean {
+    const id = typeof msg.id === 'number' ? msg.id : -1;
+    const pending = this._hostPending.get(id);
+    if (!pending) return false;
+    this._hostPending.delete(id);
+    clearTimeout(pending.timer);
+    if (typeof msg.error === 'string') pending.reject(new Error(msg.error));
+    else pending.resolve(msg.result);
+    return true;
   }
 
   /**
@@ -424,6 +482,13 @@ export class BerrytraceRelay {
       this._reconnectDelay = RECONNECT_MIN_MS;
       this._attachRelayConnection(ws);
       this._startHeartbeat(ws);
+      /*
+       * 🔴 连上就问一次「现在在录吗」。
+       * MV3 的 worker 随时被回收，回收之后缓存也没了 —— 不主动问的话，
+       * 用户要等到下一次相位变化（可能是几分钟后的"停止"）才知道自己在录，
+       * 而在那之前他打开的页面上**一条工具条都没有**。
+       */
+      onRelayConnectedForRecording();
     };
 
     ws.onclose = (ev: CloseEvent) => {
@@ -472,6 +537,17 @@ export class BerrytraceRelay {
         msg = null;
       }
       if (msg) relayDiag('recv', JSON.stringify(msg).slice(0, 120));
+      /*
+       * 🔴 **先认「这是不是我们自己发出去那条的回音」。**
+       * 不先认的话它会一路落到最后那个 passthrough，交给上游的
+       * `RelayConnection` —— 而那份代码只认宿主发起的 `chrome.*` 请求，
+       * 收到一条不认识的应答会**静默丢掉**，我们这边就挂在超时上。
+       */
+      if (msg && typeof (msg as { id?: unknown }).id === 'number'
+        && !('method' in msg) && !('type' in msg)
+        && this._resolveHostReply(msg as { id?: unknown; result?: unknown; error?: unknown })) {
+        return;
+      }
       if (msg && 'method' in msg && typeof msg.method === 'string' && msg.method.startsWith('berrytrace.')) {
         void this._onHostRpc(msg as HostRpc, ws);
         return;
@@ -502,6 +578,12 @@ export class BerrytraceRelay {
         // 回 `swStartedAt` 是为了分辨**两种成功**：连接一直没断，还是断了又重连
         // （重连也能 pong，但 swStartedAt 会变 ⇒ 中间那段时间指令是发不出去的）。
         ws.send(JSON.stringify({ id: msg.id, result: { pong: true, swStartedAt: SW_STARTED_AT, now: Date.now() } }));
+        return;
+      }
+      if (msg.method === RECORDING_RPC.state) {
+        // 宿主推来的录制态：缓存 + 广播给每一个标签页（recordSwBridge.ts）
+        onHostRecordingState((msg.params?.[0] ?? null) as RecordingStateView | null);
+        ws.send(JSON.stringify({ id: msg.id, result: { ok: true } }));
         return;
       }
       if (msg.method === 'berrytrace.env') {
@@ -823,12 +905,18 @@ export class BerrytraceRelay {
 
 let singleton: BerrytraceRelay | null = null;
 let pairListenerInstalled = false;
+let recordingBridgeInstalled = false;
 let alarmListenerInstalled = false;
 
 /** background 里调一次即可。重复调用是安全的（service worker 会重启，这很常见）。 */
 export function initBerrytraceRelay(): BerrytraceRelay {
   if (!singleton) singleton = new BerrytraceRelay();
   void singleton.start();
+  // 录制那一跳：页面 ↔ 这里 ↔ 宿主。**顶层同步装**，和别的事件源同一条纪律
+  if (!recordingBridgeInstalled) {
+    recordingBridgeInstalled = true;
+    installRecordingSwBridge(singleton);
+  }
   installKeepaliveAlarm();
   installUserActivityWake();
   // service worker 每次重启都会重新执行本文件，监听器只装一次，

@@ -75,6 +75,16 @@
         "relay-wake.js"
       ],
       "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "relay-record.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [

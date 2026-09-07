@@ -182,6 +182,9 @@ module.exports = (env, argv) => {
 			// 🔴 把被回收的 service worker 立刻叫醒的那条路：注入用户打开的每一个页面。
 			//    它必须一直很小（见该文件头）——别往这个 entry 上挂任何依赖。
 			'relay-wake': './src/relay/wakeContentScript.ts',
+			// 录制那条工具条 + 页面采集。注入用户访问的每一个页面，
+			// **不在录的时候它只发一条消息就完事**（见该文件头）。
+			'relay-record': './src/relay/recordContentScript.ts',
 			// 看不见的转换页：HTML → Markdown。**service worker 里没有 DOM**，
 			// turndown 在那儿会静默降级成「原样返回 HTML」——详见该文件的文件头。
 			offscreen: './src/relay/offscreenMarkdown.ts',
