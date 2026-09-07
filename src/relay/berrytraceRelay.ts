@@ -44,9 +44,34 @@ import { runSelfTest } from './selftest';
 /** 宿主 App 监听的默认端口。可被设置覆盖 —— 端口撞车是常态，不是异常。 */
 const DEFAULT_RELAY_PORT = 47823;
 
-/** 断线后的重连节奏。指数退避，封顶 30s：App 没开着的时候不该每秒敲一次。 */
+/**
+ * 断线后的重连节奏。指数退避：App 没开着的时候不该每秒敲一次。
+ *
+ * 🔴 封顶 0907 从 30s 降到 8s。原来那个 30s 是照着
+ * `chrome.alarms` 的最小周期取的 —— 当时闹钟是**唯一**能把死掉的 worker
+ * 拉起来的东西，所以退避再短也没意义。现在用户活动本身就是触发器
+ * （见 {@link installUserActivityWake}），长退避剩下的唯一作用是省电，
+ * 而 8 秒对省电已经足够：一个用户不在的浏览器每 8 秒发一次本机 TCP 连接，
+ * 代价可以忽略；而 30 秒是**用户看得见的等待**。
+ *
+ * 失效条件：哪天 MV3 给了扩展常驻后台的能力，这一整套退避＋闹钟＋活动唤醒
+ * 可以整个删掉，改回一条长连接。
+ */
 const RECONNECT_MIN_MS = 1000;
-const RECONNECT_MAX_MS = 30000;
+const RECONNECT_MAX_MS = 8000;
+
+/**
+ * 两次「用户活动触发的重连」之间至少隔多久。
+ *
+ * 用户切标签、切窗口、开页面，这几个事件在他正常使用时是**连着来的**
+ * （开一个新窗口能一次性打出好几条）。不节流的话，一次正常的多开
+ * 就会变成十几次并发连接尝试，宿主那边"后来的顶掉先来的"，
+ * 表现反而是连不上。
+ */
+const NUDGE_THROTTLE_MS = 800;
+
+/** 上一次被用户活动叫醒是什么时候。模块级 —— worker 重启时归零，正好。 */
+let lastNudgeAt = 0;
 
 /**
  * 🔴 **MV3 的两条硬约束，这一层的形状全是被它们逼出来的**（0828 本机实测，都踩过）：
@@ -277,6 +302,39 @@ export class BerrytraceRelay {
     this._connection = null;
     this._ws?.close();
     this._ws = null;
+  }
+
+  /**
+   * 「用户正在动」—— 立刻重试一次，并且把退避清零。
+   *
+   * 🔴 **这是 0907 那个问题的正面答案**（李博：「因为用户操作太快，插件还没有准备好，
+   * 需要用户等一下的」）。在它出现之前，重连的节奏只由**上一次失败**决定：
+   * 指数退避，连不上几次之后就是每 30 秒才敲一次门。而那个节奏对"用户此刻在不在用"
+   * 一无所知 —— 用户刚打开浏览器、正要动手的那一刻，我们可能恰好排在
+   * 一个 30 秒的等待里，什么都不做。
+   *
+   * ⇒ 把**用户活动**当成一等的重连触发器：他切标签、切窗口、打开网页，
+   *   都说明"他马上要用了"，此时应该立刻敲一次门，而不是等完那个退避。
+   *
+   * ⚠️ 三条自保，缺一条都会变成"疯狂重连"：
+   *   · 已经连着（含 CONNECTING）就什么都不做 —— 这是最常见的情况；
+   *   · 两次 nudge 之间至少隔 {@link NUDGE_THROTTLE_MS}：用户狂切标签时
+   *     这个函数会被叫得非常密；
+   *   · 只清退避、不额外开连接：真正的连接动作仍然只走 `_connectLoop` 一条路。
+   */
+  public nudge(因为: string): void {
+    if (this._stopped || this.connected) return;
+    const now = Date.now();
+    if (now - lastNudgeAt < NUDGE_THROTTLE_MS) return;
+    lastNudgeAt = now;
+    relayDiag('nudge', 因为);
+    // 退避是"上一次失败"留下的账。用户既然动了，这笔账就不该再算在他头上。
+    this._reconnectDelay = RECONNECT_MIN_MS;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    void this._connectLoop();
   }
 
   private async _settings(): Promise<RelaySettings> {
@@ -772,6 +830,7 @@ export function initBerrytraceRelay(): BerrytraceRelay {
   if (!singleton) singleton = new BerrytraceRelay();
   void singleton.start();
   installKeepaliveAlarm();
+  installUserActivityWake();
   // service worker 每次重启都会重新执行本文件，监听器只装一次，
   // 否则一条配对消息会触发好几次重连。
   if (!pairListenerInstalled && typeof chrome !== 'undefined' && chrome.runtime?.onMessage) {
@@ -784,6 +843,12 @@ export function initBerrytraceRelay(): BerrytraceRelay {
       // 用户在配对页点了「允许」，token 刚落盘 —— 立刻连，
       // 不然他要盯着一个「未连接」的界面等完整个退避周期。
       if (message?.type === 'berrytrace-relay-paired') { restartBerrytraceRelay(); return; }
+      // 🔴 用户打开了一个网页 —— `wakeContentScript.ts` 发来的。
+      // **这条消息能被收到，本身就已经完成了一大半工作**：MV3 里
+      // `sendMessage` 会把已回收的 worker 拉起来，而 worker 一起来
+      // 就重新执行了整个模块、`initBerrytraceRelay()` 也跟着跑了。
+      // 这里再 nudge 一次，是为了处理"worker 活着但正排在退避里"那一种。
+      if (message?.type === 'berrytrace-relay-wake') { singleton?.nudge('页面打开'); return; }
       // 🔴 **配对页拿它来判「到底连上没有」。**
       // 在这条消息存在之前，配对页说「已连接」的判据是"token 存进 storage 了" ——
       // 那只证明我们把钥匙记下来了，不证明门开了。见 `handshaken` 上面那段。
@@ -824,6 +889,65 @@ function installKeepaliveAlarm(): void {
       void singleton?.start();
     });
   }
+}
+
+/**
+ * 🔴 **把「用户在动」变成重连触发器。** 这是 0907 那个问题的正面答案。
+ *
+ * 李博的原话：「当用户打开浏览器，如何能够快速建立链接？这里是否可以自动连接插件，
+ * 主动唤醒机制？因为用户操作太快，插件还没有准备好，需要用户等一下的。」
+ *
+ * ── 先说一条查清楚了的边界：**宿主没有办法主动唤醒扩展** ────────────────────
+ * 「App 那侧主动去连插件」这条路是不存在的，四个方向都走死了：
+ *   · native messaging 只能扩展连原生程序，反向不行；
+ *   · 宿主拿不到用户日常浏览器的调试端口（Chrome 136 起对默认 profile
+ *     直接忽略 `--remote-debugging-port`）；
+ *   · 宿主写文件让扩展轮询 —— worker 死了就没人轮询；
+ *   · declarativeNetRequest 那套是声明式的，不唤醒 worker。
+ * ⇒ 主动权只能在扩展这一侧，办法是**多挂几个能唤醒 worker 的事件源**。
+ *
+ * ── 挂了哪几个，各自能覆盖什么 ─────────────────────────────────────────────
+ * | 事件源 | 什么时候发 | 覆盖的场景 |
+ * |---|---|---|
+ * | `runtime.onStartup` | 浏览器启动 | 用户开机后第一次打开浏览器 |
+ * | 页面注入（`wakeContentScript.ts`） | 打开/刷新任何网页 | **最快的一条**，用户一上网就到 |
+ * | `windows.onFocusChanged` | 切回浏览器窗口 | 他从别的软件切回来，正要动手 |
+ * | `tabs.onActivated` | 切换标签 | 浏览器一直开着、只是在里面转 |
+ * | `tabs.onUpdated`(loading) | 地址栏导航 | 同上，且不经过标签切换 |
+ * | `alarms`（原有） | 每 30 秒 | 以上全都没发生时的兜底 |
+ *
+ * 🔴 **监听器必须在顶层同步注册**（同 `installKeepaliveAlarm` 那条）：
+ * worker 被唤醒时会重新执行整个模块，唤醒它的那个事件**就在那一轮派发**。
+ * 注册进任何 `await` 后面都可能错过它 —— 而且零报错，表现就是"偶尔要等很久"。
+ *
+ * ⚠️ 这些监听器的意义有**两层**，别只看到第二层：
+ *   ① 注册这件事本身让这些事件成为 worker 的唤醒源（死了能复活）；
+ *   ② 回调里的 `nudge()` 让活着但排在退避里的那一种立刻重试。
+ *   ⇒ 所以哪怕回调体是空的，注册也不能省。
+ */
+let activityWakeInstalled = false;
+function installUserActivityWake(): void {
+  if (activityWakeInstalled || typeof chrome === 'undefined') return;
+  activityWakeInstalled = true;
+  const 叫 = (因为: string) => () => { try { singleton?.nudge(因为); } catch { /* 叫不动不许炸掉事件派发 */ } };
+
+  try { chrome.runtime?.onStartup?.addListener(叫('浏览器启动')); } catch { /* 老浏览器没有就算了 */ }
+  try { chrome.tabs?.onActivated?.addListener(叫('切标签')); } catch { /* 同上 */ }
+  try {
+    chrome.windows?.onFocusChanged?.addListener((winId) => {
+      // 焦点离开浏览器时也会发一条（winId = WINDOW_ID_NONE），那一条不算"要用"。
+      if (winId === chrome.windows.WINDOW_ID_NONE) return;
+      叫('切回浏览器')();
+    });
+  } catch { /* 同上 */ }
+  try {
+    chrome.tabs?.onUpdated?.addListener((_id, info) => {
+      // 只认"开始加载"。onUpdated 在一次导航里会发好几条（title / favicon / status），
+      // 全接的话节流阀会被自己的噪音占满，真正的用户活动反而被挡在外面。
+      if (info.status !== 'loading') return;
+      叫('导航')();
+    });
+  } catch { /* 同上 */ }
 }
 
 /** 配对完成（拿到 token）之后调它，立刻连上，不用等退避计时。 */
