@@ -218,6 +218,8 @@ module.exports = (env, argv) => {
 			// 录制那条工具条 + 页面采集。注入用户访问的每一个页面，
 			// **不在录的时候它只发一条消息就完事**（见该文件头）。
 			'relay-record': './src/relay/recordContentScript.ts',
+			// 弹窗里「唤醒录制工具条」按钮的脚本（自动唤醒没成时的手动补救）
+			'relay-wake-button': './src/relay/wakeButton.ts',
 			// 看不见的转换页：HTML → Markdown。**service worker 里没有 DOM**，
 			// turndown 在那儿会静默降级成「原样返回 HTML」——详见该文件的文件头。
 			offscreen: './src/relay/offscreenMarkdown.ts',

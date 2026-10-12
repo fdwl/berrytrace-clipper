@@ -14,6 +14,9 @@
 				</select>
 			</div>
 			<div class="popup-actions">
+				<a href="#" id="bt-wake" class="clickable-icon" title="唤醒录制工具条（录制中页面上没有工具条时点这里）">
+					<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+				</a>
 				<a href="#" id="show-variables" class="clickable-icon" 
 					data-i18n-title="showPageVariables">
 					<i data-lucide="ellipsis"></i>
@@ -36,6 +39,7 @@
 				</a>		
 			</div>
 		</div>
+		<p id="bt-wake-note" style="display: none; margin: 4px 12px; font-size: 12px; line-height: 1.5;"></p>
 		<p class="error-message" style="display: none;"></p>
 		<div class="clipper">
 			<textarea id="note-name-field" type="text" data-i18n="noteName" rows="1"></textarea>
@@ -80,6 +84,7 @@
 				</div>
 			</div>
 		</div>
+		<script src="relay-wake-button.js"></script>
 		<script type="module" src="popup.js"></script>
 	</body>
 </html>

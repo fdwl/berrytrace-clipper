@@ -15,9 +15,11 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   RECORDING_RPC,
   installRecordingSwBridge,
+  rebindRecordingChannel,
   onHostRecordingState,
   onRelayConnectedForRecording,
   recordingStats,
+  wakeRecording,
   tabsNeedingInjection,
   type RecordingStateView,
 } from './recordSwBridge';
@@ -185,6 +187,19 @@ describe('worker 重启之后主动去要一次', () => {
   });
 });
 
+describe('配对后中继对象被换掉', () => {
+  it('🔴 通道改指新对象之后，hello 发给新的、不再发给旧的（对照：旧的那条一条也没收到）', async () => {
+    const 新的: string[] = [];
+    const 旧的数量 = 发给宿主的.length;
+    宿主怎么回 = () => 录制中;
+    rebindRecordingChannel({ sendToHost: async (method) => { 新的.push(method); return 录制中; } });
+    onRelayConnectedForRecording();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(新的).toEqual([RECORDING_RPC.hello]);
+    expect(发给宿主的.length, '旧通道不该再被用到').toBe(旧的数量);
+  });
+});
+
 describe('页面上的事件往宿主转', () => {
   it('点击 / 标注 / 打点 / 停止 各走各的方法名', async () => {
     await 问('berrytrace-recording-event', { kind: 'click', at: 1 });
@@ -254,5 +269,33 @@ describe('两边的方法名', () => {
       mark: 'berrytrace.recording.mark',
       stop: 'berrytrace.recording.stop',
     });
+  });
+});
+
+describe('手动唤醒：自动路径没成时，点一下无条件再来一遍', () => {
+  it('🔴 已经"在录"（缓存是 show:true，自动路径不会再扫）时，手动唤醒仍然补注入并广播', async () => {
+    宿主怎么回 = () => 录制中;
+    onHostRecordingState(录制中);          // 缓存已是在录：helloHost 的"翻正沿"判据此刻不会再扫
+    注入过的 = []; 发给标签的 = [];
+    const r = await wakeRecording();
+    expect(r).toEqual({ hostRecording: true, injected: 1 });
+    expect(注入过的, '普通网页要补上，chrome:// 那个不许打').toEqual([1]);
+    expect(发给标签的.length, '已装着的页面靠广播亮起来').toBeGreaterThan(0);
+  });
+
+  it('宿主说没在录：回 false，不注入', async () => {
+    宿主怎么回 = () => null;
+    注入过的 = [];
+    expect(await wakeRecording()).toEqual({ hostRecording: false, injected: 0 });
+    expect(注入过的).toEqual([]);
+  });
+
+  it('🔴 问不到宿主：回 null，不动缓存也不广播（不能把在录的工具条撤掉）', async () => {
+    onHostRecordingState(录制中);
+    发给标签的 = [];
+    宿主通不通 = false;
+    expect(await wakeRecording()).toEqual({ hostRecording: null, injected: 0 });
+    expect(发给标签的).toEqual([]);
+    expect(await 问('berrytrace-recording-hello')).toMatchObject({ show: true });
   });
 });
