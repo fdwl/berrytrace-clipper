@@ -204,9 +204,13 @@ function main(): void {
   }
 
   function onClick(e: MouseEvent): void {
-    // 拾取态下那一下是"我要标这个"，不是"我要点这个"。
-    // 不排除的话，事件流里会多出一次他根本没打算做的点击
-    if (toolbar.isPicking || isOurs(e)) return;
+    /*
+     * 拾取态下的点击也照常报：拾取不再拦页面自己的点击（页面真的响应了），
+     * 所以这是一次真实动作。同一下同时报出的标注由宿主读时并成一步（web-annotate-fold.ts）。
+     * 老版本在这里 `return`，现象是拾取点出来的页面跳转在事件流里没有对应的点击。
+     * 失效条件：宿主不再按「点击+标注」读时合并之后，回头评估是否要改回只报一条。
+     */
+    if (isOurs(e)) return;
     const el = e.target as Element | null;
     report({
       kind: 'click',
