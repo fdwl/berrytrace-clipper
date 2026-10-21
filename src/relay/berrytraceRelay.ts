@@ -38,6 +38,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { probeTabsAttached } from './probeTabs';
 import { RelayConnection, debugLog } from './relayConnection';
 import {
   RECORDING_RPC,
@@ -850,30 +851,25 @@ export class BerrytraceRelay {
          * 探针顺手把 bug 修好的话，它就永远看不见这个 bug 了。
          */
         const tabs = await chrome.tabs.query({});
-        const out: Array<{ id: number; url: string; title: string; 挂上了: boolean | null }> = [];
-        for (const t of tabs) {
-          if (typeof t.id !== 'number') continue;
-          if (!/^https?:/i.test(t.url ?? '')) continue;
-          let 挂上了: boolean | null = null;
+        // 并行 + 单页超时：一页不回不许拖住整个探针（见 probeTabs.ts）。null ≠ false：「没挂上」和「问不出来」是两件事。
+        const probed = await probeTabsAttached(tabs, async (t) => {
           try {
             const [hit] = await chrome.scripting.executeScript({
-              target: { tabId: t.id },
+              target: { tabId: t.id as number },
               world: 'MAIN',
               func: () => !!document.querySelector('[data-berrytrace-recording]'),
             });
-            挂上了 = hit?.result === true;
+            return hit?.result === true;
           } catch {
-            // 注入不进去（受保护的页、正在崩的标签）。**null 不是 false** ——
-            // "没挂上"和"问不出来"是两件事，混成一个的话下游会去修不存在的 bug
-            挂上了 = null;
+            return null;
           }
-          out.push({
-            id: t.id,
-            url: (t.url ?? '').slice(0, 160),
-            title: (t.title ?? '').slice(0, 80),
-            挂上了,
-          });
-        }
+        });
+        const out = probed.map(({ tab: t, 挂上了 }) => ({
+          id: t.id as number,
+          url: (t.url ?? '').slice(0, 160),
+          title: (t.title ?? '').slice(0, 80),
+          挂上了,
+        }));
         ws.send(JSON.stringify({ id: msg.id, result: { build: RELAY_BUILD, tabs: out } }));
         return;
       }
