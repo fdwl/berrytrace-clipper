@@ -39,6 +39,11 @@ export interface ElementSnapshot {
   xpath?: string;
   counts?: { id?: number; testId?: number; ariaLabel?: number; text?: number };
   framePath?: string[];
+  /**
+   * 往上走的祖先（最近的在前，最多 {@link MAX_ANCESTORS} 层），**只抄事实不判定**。
+   * 点的是 svg/path/i 这类自己没有文字的图标节点时，名字在祖先身上。
+   */
+  ancestors?: Array<{ tag: string; role?: string; text?: string; ariaLabel?: string }>;
 }
 
 /** 与宿主 `web-capture.ts` 的 WebInteraction 逐字段对应。 */
@@ -60,6 +65,12 @@ const TEST_ID_ATTRS = ['data-testid', 'data-test-id', 'data-test', 'data-qa', 'd
 
 /** 可见文字裁到这个长度。再长的对定位没用，只会把上报撑大 */
 const MAX_TEXT = 80;
+
+/** 祖先链最多往上走几层 */
+const MAX_ANCESTORS = 8;
+
+/** 这些标签的文字就是它的名字（按钮里的图标，名字在这一层） */
+const NAMING_TAGS = new Set(['button', 'a', 'label', 'summary']);
 
 /**
  * 数一条选择器在这一页里匹配几个。
@@ -205,6 +216,32 @@ function countSameText(el: Element, text: string): number {
 }
 
 /**
+ * 祖先链：从父元素往上，`html`/`body` 不收。每层只读属性和文字，不跑 querySelectorAll。
+ * 一层什么名字都没有（没 role、没可访问名、没文字）也要收，宿主靠层序判断；但全链都空就不给。
+ */
+function ancestorsOf(el: Element): ElementSnapshot['ancestors'] {
+  const out: NonNullable<ElementSnapshot['ancestors']> = [];
+  let node = el.parentElement;
+  while (node && out.length < MAX_ANCESTORS) {
+    const tag = node.tagName.toLowerCase();
+    if (tag === 'html' || tag === 'body') break;
+    const item: { tag: string; role?: string; text?: string; ariaLabel?: string } = { tag };
+    const role = node.getAttribute('role');
+    if (role) item.role = role;
+    const name = accessibleName(node);
+    if (name) item.ariaLabel = name;
+    // 文字只在「会带名字的控件」上取：容器的 textContent 是半个页面，既没用又多带内容
+    if (NAMING_TAGS.has(tag) || role) {
+      const text = tidyText(node.textContent);
+      if (text) item.text = text;
+    }
+    out.push(item);
+    node = node.parentElement;
+  }
+  return out.some((a) => a.role || a.ariaLabel || a.text) ? out : undefined;
+}
+
+/**
  * 抄下一个元素的结构事实。
  *
  * ⚠️ 这个函数会跑 `querySelectorAll` 几次。它只在**用户真的点了/输入完**
@@ -260,6 +297,9 @@ export function snapshotElement(el: Element): ElementSnapshot {
   if (css) snap.cssPath = css;
   const xp = xpathOf(el);
   if (xp) snap.xpath = xp;
+
+  const ancestors = ancestorsOf(el);
+  if (ancestors) snap.ancestors = ancestors;
 
   snap.counts = counts;
   return snap;

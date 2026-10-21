@@ -134,6 +134,8 @@ export class RecordToolbar {
   private hover: Element | null = null;
   private tickTimer: number | null = null;
   private state: RecordingStateView | null = null;
+  /** 采集期间 hover 外框是否开着（跟着 capture 走，见 {@link startHover}） */
+  private hovering = false;
 
   constructor(private readonly h: ToolbarHandlers) {}
 
@@ -191,6 +193,7 @@ export class RecordToolbar {
 
   public unmount(): void {
     this.stopPick();
+    this.stopHover();
     if (this.tickTimer !== null) window.clearInterval(this.tickTimer);
     this.tickTimer = null;
     this.host?.remove();
@@ -204,6 +207,9 @@ export class RecordToolbar {
     this.state = { ...s };
     this.baseAt = Date.now();
     if (!s.capture && this.picking) this.stopPick();
+    // 采集期间 hover 外框常开；暂停/标注中撤掉
+    if (s.capture) this.startHover();
+    else this.stopHover();
     this.paint();
   }
 
@@ -266,40 +272,63 @@ export class RecordToolbar {
   }
 
   /**
-   * 进拾取态。
+   * 进拾取（标注）态。
    *
-   * 🔴 三个监听全挂在 **capture 阶段并且 preventDefault** ——
-   * 拾取时点中的那一下**绝不能落到页面上**：他想标的往往是一个链接或按钮，
-   * 落下去页面就跳走了，而他要标的东西连同这次录制的上下文一起没了。
+   * 🔴 **不拦页面的事件。** 监听挂在 capture 阶段，但只观察、绝不 preventDefault / stopPropagation：
+   * 拦一下，页面不跳转、不展开，下一步的界面变化就和这一步的动作对不上，
+   * 材料里出现「点了一下 div，然后界面整个换了」这种因果断裂（1020 录制调查档 §6.3）。
+   * 他想标的是链接或按钮时，标完页面照常跳走，由后面的 navigate 事件接上因果。
    */
   private startPick(): void {
     if (this.picking) return;
     this.picking = true;
     this.root?.querySelector('.tip')?.classList.remove('hidden');
     this.root?.querySelector('button[data-act="pick"]')?.classList.add('on');
-    document.addEventListener('mousemove', this.onMove, true);
+    this.startHover();
     document.addEventListener('click', this.onPickClick, true);
     document.addEventListener('keydown', this.onPickKey, true);
   }
 
   private stopPick(): void {
     this.picking = false;
-    this.hover = null;
     this.root?.querySelector('.tip')?.classList.add('hidden');
-    this.root?.querySelector('.hl')?.classList.add('hidden');
     this.root?.querySelector('button[data-act="pick"]')?.classList.remove('on');
-    document.removeEventListener('mousemove', this.onMove, true);
     document.removeEventListener('click', this.onPickClick, true);
     document.removeEventListener('keydown', this.onPickKey, true);
+    // hover 外框跟采集走，不跟拾取走：采集还开着就留着
+    if (!this.state?.capture) this.stopHover();
+  }
+
+  /**
+   * hover 外框：鼠标移到哪个元素上，那一圈蓝框就跟到哪（`.hl` 自己 pointer-events:none，不吃事件）。
+   * 只读 `e.target` 和 getBoundingClientRect，页面感知不到；不在这里做 snapshot（它会跑 querySelectorAll，
+   * 挂在 mousemove 上会让别人的网站变卡）。
+   */
+  private startHover(): void {
+    if (this.hovering) return;
+    this.hovering = true;
+    document.addEventListener('mousemove', this.onMove, { capture: true, passive: true });
+  }
+
+  private stopHover(): void {
+    this.hovering = false;
+    this.hover = null;
+    this.root?.querySelector('.hl')?.classList.add('hidden');
+    document.removeEventListener('mousemove', this.onMove, true);
   }
 
   private readonly onMove = (e: MouseEvent): void => {
     const el = e.target as Element | null;
-    if (!el || el === this.host) return;
-    this.hover = el;
-    const box = el.getBoundingClientRect();
     const hl = this.root?.querySelector('.hl') as HTMLElement | null;
     if (!hl) return;
+    // 指到我们自己的工具条上：不框（框住工具条没有意义，还会盖住按钮）
+    if (!el || el === this.host) {
+      this.hover = null;
+      hl.classList.add('hidden');
+      return;
+    }
+    this.hover = el;
+    const box = el.getBoundingClientRect();
     hl.classList.remove('hidden');
     hl.style.left = `${box.left}px`;
     hl.style.top = `${box.top}px`;
@@ -309,8 +338,7 @@ export class RecordToolbar {
 
   private readonly onPickClick = (e: MouseEvent): void => {
     if ((e.target as Element | null) === this.host) return;
-    e.preventDefault();
-    e.stopPropagation();
+    // 只观察，不拦（见 startPick）
     const el = (e.target as Element | null) ?? this.hover;
     if (!el) return;
     this.picked = snapshotElement(el);
@@ -320,8 +348,6 @@ export class RecordToolbar {
 
   private readonly onPickKey = (e: KeyboardEvent): void => {
     if (e.key !== 'Escape') return;
-    e.preventDefault();
-    e.stopPropagation();
     this.stopPick();
   };
 
