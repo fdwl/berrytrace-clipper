@@ -174,6 +174,43 @@ export async function helloHost(): Promise<void> {
   }
 }
 
+/**
+ * 手动唤醒用：**不看缓存、不看"翻正沿"**，强制问一次宿主，在录就广播并给所有 http/https
+ * 标签页补注入。自动路径（helloHost / 推送）只在"从没在录翻成在录"那一下补注入，
+ * 用户点按钮时说明自动路径没成，这里必须无条件再来一遍（重复注入由页面侧的标记兜住）。
+ *
+ * 返回 hostRecording=null 表示问不到（中继没连上 / 宿主没应答），**不动缓存也不广播**。
+ */
+export async function wakeRecording(): Promise<{ hostRecording: boolean | null; injected: number }> {
+  if (!channel) return { hostRecording: null, injected: 0 };
+  let s: RecordingStateView | null;
+  try {
+    s = (await channel.sendToHost(RECORDING_RPC.hello, [])) as RecordingStateView | null;
+  } catch {
+    return { hostRecording: null, injected: 0 };
+  }
+  cached = s ?? null;
+  broadcast(cached);
+  if (cached?.show !== true) return { hostRecording: false, injected: 0 };
+  const injected = await new Promise<number>((resolve) => {
+    try {
+      chrome.tabs.query({}, (tabs) => {
+        void chrome.runtime.lastError;
+        const ids = tabsNeedingInjection(tabs as Array<{ id?: number; url?: string }>);
+        for (const id of ids) {
+          try {
+            const r = chrome.scripting.executeScript({ target: { tabId: id }, files: ['relay-record.js'] }) as unknown as Promise<unknown> | undefined;
+            if (r && typeof (r as Promise<unknown>).catch === 'function') void (r as Promise<unknown>).catch(() => {});
+          } catch { /* 这一个注入不进去，不影响别的 */ }
+        }
+        resolve(ids.length);
+      });
+    } catch { resolve(0); }
+  });
+  // 补注入的页面刚装上，自己会问"在录吗"；已经装着的页面靠上面那次广播亮起来。
+  return { hostRecording: true, injected };
+}
+
 async function forward(method: string, payload: unknown): Promise<unknown> {
   if (!channel) {
     stats.refused += 1;
@@ -195,6 +232,18 @@ async function forward(method: string, payload: unknown): Promise<unknown> {
     stats.failed += 1;
     return { ok: false, reason: String((e as Error)?.message ?? e) };
   }
+}
+
+/**
+ * 中继对象被换掉之后（配对完成会 stop 旧的、new 新的），把宿主通道指到新的上面。
+ *
+ * 🔴 只换通道，不重装监听器、不清缓存：监听器装两遍会让每条页面消息处理两次；
+ * 缓存要留着，新连接一上来 onopen 会再问宿主一次刷新它。
+ * 漏了这一步的现象：配对页点了「允许」之后，hello 和所有录制事件都发给已停掉的旧对象，
+ * 当场被拒成 RELAY_NOT_CONNECTED，页面上永远没有工具条（直到 worker 被回收重启）。
+ */
+export function rebindRecordingChannel(ch: HostChannel): void {
+  channel = ch;
 }
 
 /**

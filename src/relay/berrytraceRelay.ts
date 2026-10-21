@@ -42,10 +42,13 @@ import { RelayConnection, debugLog } from './relayConnection';
 import {
   RECORDING_RPC,
   installRecordingSwBridge,
+  rebindRecordingChannel,
   onHostRecordingState,
   onRelayConnectedForRecording,
+  wakeRecording,
   type RecordingStateView,
 } from './recordSwBridge';
+import { wakeVerdict } from './manualWake';
 import { runSelfTest } from './selftest';
 
 /** 宿主 App 监听的默认端口。可被设置覆盖 —— 端口撞车是常态，不是异常。 */
@@ -403,6 +406,27 @@ export class BerrytraceRelay {
       this._reconnectTimer = null;
     }
     void this._connectLoop();
+  }
+
+  /**
+   * 手动唤醒用：绕过 nudge 的节流，立刻连一次并等握手（最多 4 秒）。
+   * 返回此刻的事实，由 {@link wakeVerdict} 翻成人话。已连着就不再开新连接（重入闸在 `_open`）。
+   */
+  public async connectNow(): Promise<{ supported: boolean; enabled: boolean; paired: boolean; connected: boolean; port: number }> {
+    const supported = BerrytraceRelay.isSupported();
+    const s = await this._settings();
+    const facts = { supported, enabled: s.enabled, paired: !!s.token, port: s.port };
+    if (!supported || !s.enabled || !s.token) return { ...facts, connected: false };
+    this._stopped = false;
+    this._reconnectDelay = RECONNECT_MIN_MS;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
+    relayDiag('manual-wake');
+    if (!this.handshaken) void this._connectLoop();
+    for (let i = 0; i < 40 && !this.handshaken; i++) await new Promise((r) => setTimeout(r, 100));
+    return { ...facts, connected: this.handshaken };
   }
 
   private async _settings(): Promise<RelaySettings> {
@@ -971,6 +995,8 @@ export function initBerrytraceRelay(): BerrytraceRelay {
   if (!recordingBridgeInstalled) {
     recordingBridgeInstalled = true;
     installRecordingSwBridge(singleton);
+  } else {
+    rebindRecordingChannel(singleton);   // restartBerrytraceRelay 换了对象
   }
   installKeepaliveAlarm();
   installUserActivityWake();
@@ -992,6 +1018,19 @@ export function initBerrytraceRelay(): BerrytraceRelay {
       // 就重新执行了整个模块、`initBerrytraceRelay()` 也跟着跑了。
       // 这里再 nudge 一次，是为了处理"worker 活着但正排在退避里"那一种。
       if (message?.type === 'berrytrace-relay-wake') { singleton?.nudge('页面打开'); return; }
+      // 弹窗里那颗「唤醒录制工具条」：强制连接 → 问宿主在不在录 → 补注入，回一句人话。
+      if (message?.type === 'berrytrace-recording-wake') {
+        void (async () => {
+          try {
+            const c = await (singleton ?? initBerrytraceRelay()).connectNow();
+            const w = c.connected ? await wakeRecording() : { hostRecording: null, injected: 0 };
+            sendResponse(wakeVerdict({ ...c, hostRecording: w.hostRecording, injected: w.injected }, c.port));
+          } catch (e) {
+            sendResponse({ code: 'unreachable', message: `唤醒时出错：${String((e as Error)?.message ?? e).slice(0, 80)}` });
+          }
+        })();
+        return true;   // 异步回应，通道要挂着等
+      }
       // 🔴 **配对页拿它来判「到底连上没有」。**
       // 在这条消息存在之前，配对页说「已连接」的判据是"token 存进 storage 了" ——
       // 那只证明我们把钥匙记下来了，不证明门开了。见 `handshaken` 上面那段。
