@@ -654,6 +654,73 @@ export class BerrytraceRelay {
         }));
         return;
       }
+      // ── 「只注入、不挂调试器」通道（宿主端 inject:true）──────────────────────
+      // 起因：部分站点（实测 life-data.cn，字节安全 SDK）只要标签挂着 chrome.debugger，
+      // 页面就起不来 / 几秒内把调试会话断掉；挂得早晚都一样（2026-11-12 Windows 实测）。
+      // 这一组调用全程不碰 chrome.debugger，页面里看不到调试连接。
+      // 失效条件：宿主不再有 inject 通道（`git grep -n "inject: true\|inject:true" -- electron` 零命中）后可删。
+      if (msg.method === 'berrytrace.pageEval') {
+        // 在标签页的主世界里执行一段 JS 字符串，等它（含 Promise）出结果。
+        // 返回 {ok:true,value} 或 {ok:false,error}：站点脚本抛错不算通道故障，交给上层按返回值判断。
+        // 依赖页面没有禁 eval 的 CSP；被禁时 error 里会带原话，上层照实报。
+        const { tabId, code } = (msg.params?.[0] ?? {}) as { tabId?: number; code?: string };
+        if (typeof tabId !== 'number' || typeof code !== 'string') throw new Error('pageEval 要 tabId 和 code');
+        const [injected] = await chrome.scripting.executeScript({
+          target: { tabId },
+          world: 'MAIN',
+          args: [code],
+          // 🔴 不能写 async/await：tsconfig target 是 es6，编译会换成引用外部 __awaiter 的写法，
+          // 而这个函数是被序列化后注入页面的，页面里没有那个辅助函数 ⇒ 抛 ReferenceError，
+          // executeScript 回 result:undefined（2026-11-12 Windows 实测）。用 Promise 链。
+          func: (c: string) => {
+            const fail = (e: any) => ({ ok: false, error: String((e && (e.stack || e.message)) || e) });
+            try {
+              // 间接 eval：在全局作用域求值，和调试器的 Runtime.evaluate 同一个语义
+              return Promise.resolve((0, eval)(c)).then(
+                (v: unknown) => ({ ok: true, value: v === undefined ? null : JSON.parse(JSON.stringify(v)) }),
+                fail,
+              );
+            } catch (e: any) {
+              return fail(e);
+            }
+          },
+        });
+        ws.send(JSON.stringify({ id: msg.id, result: injected?.result ?? { ok: false, error: 'executeScript 没有返回' } }));
+        return;
+      }
+      if (msg.method === 'berrytrace.tabNavigate') {
+        // 让标签去某个地址，**等加载完成**才回（没有期限：对方没回就一直等，
+        // 标签被关了才算失败 —— 判失败只认对方的反馈，不认时长）。
+        const { tabId, url } = (msg.params?.[0] ?? {}) as { tabId?: number; url?: string };
+        if (typeof tabId !== 'number' || typeof url !== 'string') throw new Error('tabNavigate 要 tabId 和 url');
+        await new Promise<void>((resolve, reject) => {
+          let sawLoading = false;
+          const done = (fn: () => void) => {
+            chrome.tabs.onUpdated.removeListener(onUpdated);
+            chrome.tabs.onRemoved.removeListener(onRemoved);
+            fn();
+          };
+          const onUpdated = (id: number, info: chrome.tabs.TabChangeInfo) => {
+            if (id !== tabId) return;
+            if (info.status === 'loading') sawLoading = true;
+            else if (info.status === 'complete' && sawLoading) done(resolve);
+          };
+          const onRemoved = (id: number) => { if (id === tabId) done(() => reject(new Error('BROWSER_TAB_CLOSED'))); };
+          chrome.tabs.onUpdated.addListener(onUpdated);
+          chrome.tabs.onRemoved.addListener(onRemoved);
+          chrome.tabs.update(tabId, { url }).catch((e) => done(() => reject(e)));
+        });
+        const tab = await chrome.tabs.get(tabId);
+        ws.send(JSON.stringify({ id: msg.id, result: { url: tab.url ?? url, title: tab.title ?? '' } }));
+        return;
+      }
+      if (msg.method === 'berrytrace.tabInfo') {
+        const { tabId } = (msg.params?.[0] ?? {}) as { tabId?: number };
+        if (typeof tabId !== 'number') throw new Error('tabInfo 要 tabId');
+        const tab = await chrome.tabs.get(tabId);
+        ws.send(JSON.stringify({ id: msg.id, result: { url: tab.url ?? '', title: tab.title ?? '', status: tab.status ?? '' } }));
+        return;
+      }
       if (msg.method === 'berrytrace.focusTab') {
         // ── 档 C 的人工接管：把这个标签**亮给用户** ────────────────────────
         //
