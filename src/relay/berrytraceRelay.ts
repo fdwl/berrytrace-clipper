@@ -51,6 +51,7 @@ import {
 } from './recordSwBridge';
 import { wakeVerdict } from './manualWake';
 import { runSelfTest } from './selftest';
+import { listPageFrames, scriptTarget } from './injectFrames';
 
 /** 宿主 App 监听的默认端口。可被设置覆盖 —— 端口撞车是常态，不是异常。 */
 const DEFAULT_RELAY_PORT = 47823;
@@ -663,10 +664,11 @@ export class BerrytraceRelay {
         // 在标签页的主世界里执行一段 JS 字符串，等它（含 Promise）出结果。
         // 返回 {ok:true,value} 或 {ok:false,error}：站点脚本抛错不算通道故障，交给上层按返回值判断。
         // 依赖页面没有禁 eval 的 CSP；被禁时 error 里会带原话，上层照实报。
-        const { tabId, code } = (msg.params?.[0] ?? {}) as { tabId?: number; code?: string };
+        // frameId（可选）：在这个 iframe 里执行（chrome 的 frameId，来自 berrytrace.listFrames）；不给 = 顶层页面。
+        const { tabId, code, frameId } = (msg.params?.[0] ?? {}) as { tabId?: number; code?: string; frameId?: number };
         if (typeof tabId !== 'number' || typeof code !== 'string') throw new Error('pageEval 要 tabId 和 code');
         const [injected] = await chrome.scripting.executeScript({
-          target: { tabId },
+          target: scriptTarget(tabId, frameId),
           world: 'MAIN',
           args: [code],
           // 🔴 不能写 async/await：tsconfig target 是 es6，编译会换成引用外部 __awaiter 的写法，
@@ -686,6 +688,13 @@ export class BerrytraceRelay {
           },
         });
         ws.send(JSON.stringify({ id: msg.id, result: injected?.result ?? { ok: false, error: 'executeScript 没有返回' } }));
+        return;
+      }
+      if (msg.method === 'berrytrace.listFrames') {
+        // 标签页里有哪些 iframe（不挂调试器），供宿主在注入档里挑一个去 pageEval。
+        const { tabId } = (msg.params?.[0] ?? {}) as { tabId?: number };
+        if (typeof tabId !== 'number') throw new Error('listFrames 要 tabId');
+        ws.send(JSON.stringify({ id: msg.id, result: await listPageFrames(chrome.scripting as never, tabId) }));
         return;
       }
       if (msg.method === 'berrytrace.tabNavigate') {
