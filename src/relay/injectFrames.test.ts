@@ -18,15 +18,15 @@ describe('listPageFrames', () => {
 
   it('跳过顶层（frameId 0）与没结果的 frame，按 frameId 升序', async () => {
     const s = fake([
-      { frameId: 9, result: { url: 'https://b.test/x', name: 'second', depth: 2 } },
+      { frameId: 9, result: { url: 'https://b.test/x', name: 'second', depth: 2, path: [0, 1] } },
       { frameId: 0, result: { url: 'https://top.test/', name: '', depth: 0 } },
-      { frameId: 3, result: { url: 'https://a.test/', name: '', depth: 1 } },
+      { frameId: 3, result: { url: 'https://a.test/', name: '', depth: 1, path: [0] } },
       { frameId: 5 },
     ]);
     const r = await listPageFrames(s, 7);
     expect(r).toEqual([
-      { frameId: 3, url: 'https://a.test/', name: '', depth: 1 },
-      { frameId: 9, url: 'https://b.test/x', name: 'second', depth: 2 },
+      { frameId: 3, url: 'https://a.test/', name: '', depth: 1, path: [0] },
+      { frameId: 9, url: 'https://b.test/x', name: 'second', depth: 2, path: [0, 1] },
     ]);
   });
 

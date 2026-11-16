@@ -17,6 +17,12 @@ export interface PageFrame {
   name: string;
   /** 1 = 页面里的 iframe，2 = iframe 里的 iframe。 */
   depth: number;
+  /**
+   * 从顶层页面走到这个 frame 的下标链：`[2, 0]` = 顶层的第 3 个子 frame 里的第 1 个子 frame。
+   * 由 frame 自己用 `parent.frames[i] === window` 算（跨域的 Window 也允许这种比较，不依赖时序，也不改页面）。
+   * 宿主靠它把「父文档里的 iframe 元素」对上「chrome 的 frameId」（`window.frames[j] === el.contentWindow`）。
+   */
+  path: number[];
 }
 
 /** executeScript 的目标：不给 frameId = 顶层页面（原行为）。 */
@@ -42,17 +48,23 @@ export async function listPageFrames(scripting: ScriptingLike, tabId: number): P
     world: 'ISOLATED',
     // 🔴 会被序列化后注入页面：不能引用外部变量，也不能写 async/await（见 berrytraceRelay.ts 的 pageEval 注释）。
     func: () => {
-      let depth = 0;
+      const path: number[] = [];
       let w: Window = window;
-      while (w !== w.top && depth < 32) { depth++; w = w.parent; }
-      return { url: location.href, name: window.name || '', depth };
+      while (w !== w.top && path.length < 32) {
+        const p: Window = w.parent;
+        let idx = -1;
+        for (let i = 0; i < p.length; i++) { if (p.frames[i] === w) { idx = i; break; } }
+        path.unshift(idx);
+        w = p;
+      }
+      return { url: location.href, name: window.name || '', depth: path.length, path };
     },
   });
   const frames: PageFrame[] = [];
   for (const r of results) {
-    const v = r.result as { url?: string; name?: string; depth?: number } | undefined;
+    const v = r.result as { url?: string; name?: string; depth?: number; path?: number[] } | undefined;
     if (typeof r.frameId !== 'number' || r.frameId === 0 || !v) continue;
-    frames.push({ frameId: r.frameId, url: v.url ?? '', name: v.name ?? '', depth: v.depth ?? 1 });
+    frames.push({ frameId: r.frameId, url: v.url ?? '', name: v.name ?? '', depth: v.depth ?? 1, path: v.path ?? [] });
   }
   return frames.sort((a, b) => a.frameId - b.frameId);
 }
