@@ -1059,7 +1059,9 @@ async function updateActionPopup(openBehavior?: Settings['openBehavior']): Promi
 	if (openBehavior === 'reader' || openBehavior === 'embedded') {
 		await browser.action.setPopup({ popup: '' });
 	} else {
-		await browser.action.setPopup({ popup: 'popup.html' });
+		// 用 manifest 声明的弹窗（Chrome 构建是 menu.html 菜单页，其余是 popup.html），
+		// 不写死：写死会在每次后台启动时把菜单盖回剪藏弹窗。
+		await browser.action.setPopup({ popup: browser.runtime.getManifest().action?.default_popup ?? 'popup.html' });
 	}
 }
 
