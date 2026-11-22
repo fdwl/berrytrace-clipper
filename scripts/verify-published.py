@@ -84,7 +84,7 @@ if _at >= 0:
     _build = re.match(r'[\w.\-]*', _tail).group(0)
     all_ok &= check('那个标记是完整字面量（不是没折的模板串）',
                     not _tail.startswith('$') and len(_build) > 0, f'构建标记={_build!r}')
-all_ok &= check('名字是 Berrytrace Clipper', m.get('name') == 'Berrytrace Clipper', str(m.get('name')))
+all_ok &= check('名字是 莓莓印记', m.get('name') == '莓莓印记', str(m.get('name')))
 
 # ── 欢迎页 ──────────────────────────────────────────────────────────────────
 # 判据同样是**内容**：三个文件齐、background 里真的有那条 onInstalled 接线、
