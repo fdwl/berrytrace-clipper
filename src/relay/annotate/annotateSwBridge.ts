@@ -111,6 +111,20 @@ export function installAnnotateSwBridge(ch: HostChannel): void {
         .catch((e: Error) => sendResponse({ connected: !String(e?.message ?? e).startsWith('RELAY_NOT_CONNECTED') }));
       return true;
     }
+    // 菜单里「扩展是不是最新」：问客户端（判据与它的自动升级同一套）。没连上中继 → NOT_CONNECTED；
+    // 老版本客户端不认这个前缀 → status 缺省（菜单显示「客户端版本较旧」）。立即更新走 updateNow。
+    if (msg?.type === 'berrytrace-extension-update-status' || msg?.type === 'berrytrace-extension-update-now') {
+      const ch6 = channel;
+      if (!ch6) { sendResponse({ ok: false, error: 'NOT_CONNECTED' }); return undefined; }
+      const method = msg.type === 'berrytrace-extension-update-now' ? 'berrytrace.extension.updateNow' : 'berrytrace.extension.updateStatus';
+      ch6.sendToHost(method, [], NO_DEADLINE)
+        .then((r) => sendResponse({ ok: true, status: (r as { status?: string } | null)?.status }))
+        .catch((e: Error) => {
+          const m = String(e?.message ?? e);
+          sendResponse({ ok: false, error: m.startsWith('RELAY_NOT_CONNECTED') ? 'NOT_CONNECTED' : m });
+        });
+      return true;
+    }
     // 菜单里的「Agent 对话框」：让客户端唤出 mini Agent 小窗（宿主侧 berrytrace.chat.openMiniAgent）
     if (msg?.type === 'berrytrace-open-mini-agent') {
       const ch3 = channel;

@@ -3,7 +3,7 @@
  * 「提取网页内容」就是原来的剪藏弹窗（popup.html），在同一个弹窗里切过去，不动剪藏本身。
  * 只在 Chrome 构建里作为默认弹窗（manifest.chrome.json）；Firefox / Safari 仍直接是剪藏弹窗。
  */
-import { statusView, STATUS_POLL_MS } from './menuStatus';
+import { statusView, updateView, STATUS_POLL_MS, type UpdateStatus } from './menuStatus';
 
 const note = document.getElementById('note');
 const show = (text: string): void => {
@@ -26,10 +26,39 @@ function renderStatus(connected: boolean | undefined): void {
 }
 renderStatus(undefined);
 // 菜单开着期间每秒问一次：后台刚被唤醒时连接常常还在握手，第一次答「没连上」不代表真没连上。
+const updEl = document.getElementById('upd');
+const updText = document.getElementById('upd-text');
+const updNow = document.getElementById('upd-now');
+function renderUpdate(connected: boolean | undefined, status: UpdateStatus | undefined): void {
+  const v = updateView(connected, status);
+  if (updEl) { updEl.classList.toggle('on', v.ok); updEl.style.display = v.text ? '' : 'none'; }
+  if (updText) updText.textContent = v.text;
+  if (updNow) updNow.style.display = v.canUpdate ? '' : 'none';
+}
+renderUpdate(undefined, undefined);
+function pollUpdate(connected: boolean): void {
+  if (!connected) { renderUpdate(false, undefined); return; }
+  chrome.runtime.sendMessage({ type: 'berrytrace-extension-update-status' }, (r: { ok?: boolean; status?: UpdateStatus } | undefined) => {
+    void chrome.runtime.lastError;
+    renderUpdate(true, r?.ok ? r.status : undefined);
+  });
+}
+updNow?.addEventListener('click', (e) => {
+  e.preventDefault();
+  if (updText) updText.textContent = '正在更新…';
+  chrome.runtime.sendMessage({ type: 'berrytrace-extension-update-now' }, (r: { ok?: boolean; status?: UpdateStatus } | undefined) => {
+    void chrome.runtime.lastError;
+    renderUpdate(true, r?.ok ? r.status : undefined);
+  });
+});
+let lastConnected: boolean | undefined;
 function pollStatus(): void {
   chrome.runtime.sendMessage({ type: 'berrytrace-client-status' }, (r: { connected?: boolean } | undefined) => {
     void chrome.runtime.lastError;
-    renderStatus(!!r?.connected);
+    const c = !!r?.connected;
+    renderStatus(c);
+    // 更新状态要问线上，不每秒问：连接状态变化时问一次（菜单刚开、握手完成、掉线）
+    if (c !== lastConnected) { lastConnected = c; pollUpdate(c); }
   });
 }
 pollStatus();
