@@ -9,6 +9,8 @@
  *
  * 标记：后台拿到客户端拼好的交接后，经这条长连接送来，这里 postMessage 进 iframe（对面只认扩展页来源）。
  */
+import { isFromPanelFrame } from './panelFrameGuard';
+
 const msg = document.getElementById('msg') as HTMLElement;
 const state = document.getElementById('state') as HTMLElement;
 const frame = document.getElementById('frame') as HTMLIFrameElement;
@@ -43,7 +45,7 @@ async function boot(): Promise<void> {
     const r = await new Promise<UrlReply | undefined>((res) => chrome.runtime.sendMessage({ type: 'berrytrace-agent-panel-url' }, (x) => { void chrome.runtime.lastError; res(x); }));
     if (r?.ok) {
       origin = new URL(r.url).origin;
-      frame.addEventListener('load', () => { frameReady = true; flush(); }, { once: true });
+      frame.addEventListener('load', () => { frameReady = true; flush(); void postPageContext(); }, { once: true });
       frame.src = r.url;
       state.style.display = 'none';
       frame.style.display = 'block';
@@ -54,6 +56,24 @@ async function boot(): Promise<void> {
     await new Promise((x) => setTimeout(x, 1500));
   }
 }
+
+// ── 侧栏里的对话页 ↔ 扩展 ─────────────────────────────────────────────
+/** 把本窗口当前标签页的网址和标题告诉对话页，让它随每条消息告诉 Agent「用户正在看哪一页」。 */
+async function postPageContext(): Promise<void> {
+  if (!frameReady || !frame.contentWindow) return;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.url) return;
+  frame.contentWindow.postMessage({ type: 'berrytrace-page-context', url: tab.url, title: tab.title ?? '' }, origin);
+}
+chrome.tabs.onActivated.addListener(() => { void postPageContext(); });
+chrome.tabs.onUpdated.addListener((_id, info, tab) => { if (tab.active && (info.url || info.title || info.status === 'complete')) void postPageContext(); });
+
+/** 对话页里的「标记网页元素」按钮：只认来自我们那个 iframe（来源与窗口都对得上）的消息。 */
+window.addEventListener('message', (ev) => {
+  if (!isFromPanelFrame(ev, origin, frame.contentWindow)) return;
+  if (ev.data?.type === 'berrytrace-annotate-toggle') chrome.runtime.sendMessage({ type: 'berrytrace-annotate-toggle-active' }, () => { void chrome.runtime.lastError; });
+  else if (ev.data?.type === 'berrytrace-panel-ready') void postPageContext();
+});
 
 // 长连接：让后台知道侧栏开着（标记才往这里送），也用它收标记。
 const port = chrome.runtime.connect({ name: 'bt-agent-panel' });

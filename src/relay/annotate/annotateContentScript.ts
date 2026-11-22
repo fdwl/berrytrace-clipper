@@ -143,7 +143,7 @@ function install(): void {
         note,
         html: (el as HTMLElement).outerHTML?.slice(0, 2000),
       }, shot);
-      void navigator.clipboard?.writeText(payload.body).catch(() => {}); // 与调试标记一致：同时进剪贴板，失败不影响送达
+      void navigator.clipboard?.writeText(payload.snippet ?? "").catch(() => {}); // 与调试标记一致：同时进剪贴板，失败不影响送达
       const r = await ask({ type: 'berrytrace-annotate-send', payload });
       if (r?.ok) { sent += 1; setStatus(`已送进输入框（第 ${sent} 条）`); }
       else if (r?.error === 'NOT_CONNECTED') setStatus('客户端没连上：请先打开莓莓印记 App', true);

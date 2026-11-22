@@ -15,7 +15,11 @@ describe('annotateCore', () => {
   });
   it('载荷：截图成文件，html 进片段', () => {
     const p = buildHandoffPayload({ url: 'u', title: 't', snap, note: '', html: '<b/>' }, 'QUJD');
-    expect(p.snippet).toBe('<b/>');
+    // 说明与 HTML 合成一份长文本；不再有 body（否则输入框里会和卡片重复一份）
+    expect(p.snippet).toContain('<b/>');
+    expect(p.snippet).toContain('元素：button#buy');
+    expect(p.body).toBeUndefined();
+    expect(buildHandoffPayload({ url: 'u', title: 't', snap, note: '' }).snippet).toContain('元素：button#buy');
     expect(p.files?.[0]).toMatchObject({ base64: 'QUJD', label: '标记截图' });
     expect(buildHandoffPayload({ url: 'u', title: 't', snap, note: '' }).files).toBeUndefined();
   });

@@ -10,6 +10,20 @@ const show = (text: string): void => {
   note.style.display = 'block';
 };
 
+// 版本号与客户端连接状态（连接状态问后台，后台 ping 客户端）
+const ver = document.getElementById('ver');
+if (ver) ver.textContent = `v${chrome.runtime.getManifest().version}`;
+const statusEl = document.getElementById('status');
+const statusText = document.getElementById('status-text');
+const statusHint = document.getElementById('status-hint');
+chrome.runtime.sendMessage({ type: 'berrytrace-relay-status' }, (r: { connected?: boolean } | undefined) => {
+  void chrome.runtime.lastError;
+  const on = !!r?.connected;
+  statusEl?.classList.toggle('on', on);
+  if (statusText) statusText.textContent = on ? '客户端已连接' : '客户端未连接';
+  if (statusHint) statusHint.textContent = on ? '' : '用 Agent 对话框会自动启动';
+});
+
 document.getElementById('m-annotate')?.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'berrytrace-annotate-toggle-active' }, () => {
     void chrome.runtime.lastError;

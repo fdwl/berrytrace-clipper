@@ -101,6 +101,16 @@ export function installAnnotateSwBridge(ch: HostChannel): void {
         });
       return true;
     }
+    // 菜单页顶部的连接状态：问客户端一声 ping。没连上中继会立刻拒绝（RELAY_NOT_CONNECTED）；
+    // 其它错误（比如老版本客户端不认 ping）说明中继通着，按已连接算。
+    if (msg?.type === 'berrytrace-relay-status') {
+      const ch5 = channel;
+      if (!ch5) { sendResponse({ connected: false }); return undefined; }
+      ch5.sendToHost('berrytrace.chat.ping', [], NO_DEADLINE)
+        .then(() => sendResponse({ connected: true }))
+        .catch((e: Error) => sendResponse({ connected: !String(e?.message ?? e).startsWith('RELAY_NOT_CONNECTED') }));
+      return true;
+    }
     // 菜单里的「Agent 对话框」：让客户端唤出 mini Agent 小窗（宿主侧 berrytrace.chat.openMiniAgent）
     if (msg?.type === 'berrytrace-open-mini-agent') {
       const ch3 = channel;

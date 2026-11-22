@@ -5,32 +5,58 @@
 		<title>莓莓印记</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1.0">
 		<style>
-			:root { color-scheme: light dark; --bg: #fff; --fg: #1f2328; --muted: #6b7280; --hover: #f2f3f5; --err: #c0392b; }
-			@media (prefers-color-scheme: dark) { :root { --bg: #1e1f22; --fg: #e6e6e6; --muted: #9aa0a6; --hover: #2b2d31; --err: #ff7b72; } }
-			html, body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
-			body { width: 260px; padding: 6px; box-sizing: border-box; }
-			h1 { margin: 6px 8px 4px; font-size: 12px; font-weight: 500; color: var(--muted); }
-			button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 9px 8px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-			button:hover { background: var(--hover); }
-			button small { display: block; color: var(--muted); font-size: 11px; }
-			svg { flex: none; }
-			#note { display: none; margin: 4px 8px 6px; font-size: 12px; color: var(--err); }
+			:root {
+				color-scheme: light dark;
+				--bg: #f4f7f5; --bg2: #e6f2ec; --card: #ffffffcc; --line: #d9e6df; --fg: #18211c; --muted: #6a7a72;
+				--accent: #2f9e75; --accent-soft: #d8efe5; --hover: #ffffff; --err: #c0392b; --shadow: 0 1px 2px #0b2a1a14, 0 6px 18px #0b2a1a10;
+			}
+			@media (prefers-color-scheme: dark) {
+				:root {
+					--bg: #171b19; --bg2: #1c2a24; --card: #222826cc; --line: #2f3a35; --fg: #e8eeea; --muted: #94a39b;
+					--accent: #4cc39a; --accent-soft: #23443a; --hover: #2a312e; --err: #ff7b72; --shadow: 0 1px 2px #0006, 0 6px 18px #0004;
+				}
+			}
+			* { box-sizing: border-box; }
+			html, body { margin: 0; color: var(--fg); font: 14px/1.45 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+			body { width: 320px; padding: 14px; background: linear-gradient(160deg, var(--bg2), var(--bg) 55%); }
+			header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+			header img { width: 34px; height: 34px; border-radius: 9px; box-shadow: var(--shadow); }
+			header h1 { flex: 1; margin: 0; font-size: 16px; font-weight: 650; letter-spacing: .02em; }
+			.pill { padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--card); color: var(--muted); font-size: 11px; }
+			.status { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); box-shadow: var(--shadow); font-weight: 550; }
+			.dot { width: 9px; height: 9px; border-radius: 50%; background: #b8c2bd; box-shadow: 0 0 0 4px #b8c2bd33; }
+			.status.on .dot { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+			.status small { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 11px; }
+			.items { display: grid; gap: 8px; }
+			.item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); color: inherit; font: inherit; text-align: left; cursor: pointer; box-shadow: var(--shadow); transition: transform .12s, background .12s, border-color .12s; }
+			.item:hover { background: var(--hover); border-color: var(--accent); transform: translateY(-1px); }
+			.ico { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+			.item b { display: block; font-weight: 600; }
+			.item small { display: block; color: var(--muted); font-size: 11.5px; }
+			#note { display: none; margin: 10px 2px 0; font-size: 12px; color: var(--err); }
 		</style>
 	</head>
 	<body>
-		<h1>莓莓印记</h1>
-		<button id="m-annotate">
-			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-			<span>标记页面元素<small>点元素写备注，发到客户端输入框</small></span>
-		</button>
-		<button id="m-agent">
-			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-			<span>Agent 对话框<small>唤出客户端的 mini Agent 小窗</small></span>
-		</button>
-		<button id="m-clip">
-			<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg>
-			<span>提取网页内容<small>剪藏当前页</small></span>
-		</button>
+		<header>
+			<img src="icons/icon48.png" alt="">
+			<h1>莓莓印记</h1>
+			<span class="pill" id="ver"></span>
+		</header>
+		<div class="status" id="status"><span class="dot"></span><span id="status-text">正在检测客户端…</span><small id="status-hint"></small></div>
+		<div class="items">
+			<button class="item" id="m-annotate">
+				<span class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+				<span><b>标记页面元素</b><small>点元素写备注，发到 Agent 对话框</small></span>
+			</button>
+			<button class="item" id="m-agent">
+				<span class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+				<span><b>Agent 对话框</b><small>在浏览器右侧栏和 Agent 对话</small></span>
+			</button>
+			<button class="item" id="m-clip">
+				<span class="ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h6"/></svg></span>
+				<span><b>提取网页内容</b><small>剪藏当前页</small></span>
+			</button>
+		</div>
 		<p id="note"></p>
 		<script src="relay-menu.js"></script>
 	</body>

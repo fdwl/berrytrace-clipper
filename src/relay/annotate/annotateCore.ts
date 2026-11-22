@@ -19,7 +19,7 @@ export interface AnnotateInput {
 }
 
 export interface HandoffPayload {
-  body: string;
+  body?: string;
   snippet?: string;
   files?: Array<{ filename: string; base64: string; label?: string }>;
 }
@@ -58,8 +58,9 @@ export function cropBox(rect: Rect, dpr: number, imgW: number, imgH: number): { 
 }
 
 export function buildHandoffPayload(i: AnnotateInput, screenshotBase64?: string): HandoffPayload {
-  const p: HandoffPayload = { body: buildAnnotationBody(i) };
-  if (i.html) p.snippet = i.html;
+  // 标记说明 + 元素 HTML 合成一份「长文本」放进对话框的长文本卡片，输入框保持为空等用户补充
+  // （李博 2026-11-22：以前 body 与 snippet 各放一份，输入框里和卡片里重复，侧栏又窄）。
+  const p: HandoffPayload = { snippet: i.html ? `${buildAnnotationBody(i)}\n\n${i.html}` : buildAnnotationBody(i) };
   if (screenshotBase64) {
     p.files = [{ filename: `mark-${Date.now()}.png`, base64: screenshotBase64, label: '标记截图' }];
   }
