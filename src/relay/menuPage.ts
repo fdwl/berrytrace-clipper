@@ -27,7 +27,7 @@ function renderStatus(connected: boolean | undefined): void {
 renderStatus(undefined);
 // 菜单开着期间每秒问一次：后台刚被唤醒时连接常常还在握手，第一次答「没连上」不代表真没连上。
 function pollStatus(): void {
-  chrome.runtime.sendMessage({ type: 'berrytrace-relay-status' }, (r: { connected?: boolean } | undefined) => {
+  chrome.runtime.sendMessage({ type: 'berrytrace-client-status' }, (r: { connected?: boolean } | undefined) => {
     void chrome.runtime.lastError;
     renderStatus(!!r?.connected);
   });

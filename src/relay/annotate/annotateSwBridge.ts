@@ -103,7 +103,7 @@ export function installAnnotateSwBridge(ch: HostChannel): void {
     }
     // 菜单页顶部的连接状态：问客户端一声 ping。没连上中继会立刻拒绝（RELAY_NOT_CONNECTED）；
     // 其它错误（比如老版本客户端不认 ping）说明中继通着，按已连接算。
-    if (msg?.type === 'berrytrace-relay-status') {
+    if (msg?.type === 'berrytrace-client-status') {
       const ch5 = channel;
       if (!ch5) { sendResponse({ connected: false }); return undefined; }
       ch5.sendToHost('berrytrace.chat.ping', [], NO_DEADLINE)
