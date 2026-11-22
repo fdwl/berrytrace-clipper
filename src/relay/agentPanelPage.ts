@@ -73,7 +73,38 @@ window.addEventListener('message', (ev) => {
   if (!isFromPanelFrame(ev, origin, frame.contentWindow)) return;
   if (ev.data?.type === 'berrytrace-annotate-toggle') chrome.runtime.sendMessage({ type: 'berrytrace-annotate-toggle-active' }, () => { void chrome.runtime.lastError; });
   else if (ev.data?.type === 'berrytrace-panel-ready') void postPageContext();
+  else if (ev.data?.type === 'berrytrace-capture-page') void captureCurrentPage();
 });
+
+let toastTimer: number | undefined;
+function toast(text: string): void {
+  let el = document.getElementById('bt-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'bt-toast';
+    el.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;padding:8px 12px;border-radius:8px;background:#333;color:#fff;font:13px system-ui;z-index:10;';
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+  el.style.display = 'block';
+  window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => { el!.style.display = 'none'; }, 4000);
+}
+
+/** 对话页里的「截取当前页」：拍本窗口当前标签页的可见区域，走标记同一条交接路径，作为文件芯片填进输入框。 */
+async function captureCurrentPage(): Promise<void> {
+  try {
+    const win = await chrome.windows.getCurrent();
+    const dataUrl = await chrome.tabs.captureVisibleTab(win.id ?? chrome.windows.WINDOW_ID_CURRENT, { format: 'png' });
+    const r = await new Promise<{ ok?: boolean; error?: string } | undefined>((res) => chrome.runtime.sendMessage(
+      { type: 'berrytrace-annotate-send', payload: { files: [{ filename: `page-${Date.now()}.png`, base64: dataUrl.split(',')[1], label: '当前页截图' }] } },
+      (x) => { void chrome.runtime.lastError; res(x); },
+    ));
+    if (!r?.ok) toast(`截图没送进输入框：${r?.error ?? '未知错误'}`);
+  } catch (e) {
+    toast(`截图失败：${String((e as Error)?.message ?? e)}`);
+  }
+}
 
 // 长连接：让后台知道侧栏开着（标记才往这里送），也用它收标记。
 const port = chrome.runtime.connect({ name: 'bt-agent-panel' });
