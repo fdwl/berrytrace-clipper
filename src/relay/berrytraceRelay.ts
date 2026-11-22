@@ -53,6 +53,7 @@ import { installAnnotateSwBridge, rebindAnnotateChannel } from './annotate/annot
 import { wakeVerdict } from './manualWake';
 import { runSelfTest } from './selftest';
 import { listPageFrames, scriptTarget } from './injectFrames';
+import { findActiveTab } from './activeTab';
 
 /** 宿主 App 监听的默认端口。可被设置覆盖 —— 端口撞车是常态，不是异常。 */
 const DEFAULT_RELAY_PORT = 47823;
@@ -722,6 +723,12 @@ export class BerrytraceRelay {
         });
         const tab = await chrome.tabs.get(tabId);
         ws.send(JSON.stringify({ id: msg.id, result: { url: tab.url ?? url, title: tab.title ?? '' } }));
+        return;
+      }
+      if (msg.method === 'berrytrace.activeTab') {
+        // 用户此刻正在看的标签（最后获得焦点的普通窗口里的活动标签），给右侧栏 Agent 读写「当前页」用。
+        // 只读标签信息，不开标签、不切标签、不挂调试器；拿到 tabId 后宿主再走 pageEval。取法与理由见 activeTab.ts。
+        ws.send(JSON.stringify({ id: msg.id, result: await findActiveTab(chrome.tabs as never) }));
         return;
       }
       if (msg.method === 'berrytrace.tabInfo') {
