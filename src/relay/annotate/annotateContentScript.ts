@@ -114,16 +114,18 @@ function install(): void {
   }
 
   /** 截图：先把自己的界面藏掉再拍，拍完裁到元素；元素在视口外就用整张 */
+  let shotError = '';
   async function shoot(el: Element): Promise<string | undefined> {
+    shotError = '';
     const rect = el.getBoundingClientRect();
     if (host) host.style.visibility = 'hidden';
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
     let res: SendResult;
     try { res = await ask({ type: 'berrytrace-annotate-capture' }); } finally { if (host) host.style.visibility = ''; }
-    if (!res?.ok || !res.dataUrl) return undefined;
+    if (!res?.ok || !res.dataUrl) { shotError = String((res as { error?: string } | undefined)?.error ?? '没有返回图像'); return undefined; }
     const img = new Image();
     img.src = res.dataUrl;
-    await img.decode();
+    try { await img.decode(); } catch (e) { shotError = `图像解码失败：${String((e as Error)?.message ?? e)}`; return undefined; }
     const b = cropBox({ x: rect.left, y: rect.top, width: rect.width, height: rect.height }, window.devicePixelRatio || 1, img.naturalWidth, img.naturalHeight);
     if (!b) return res.dataUrl.split(',')[1];
     const c = document.createElement('canvas');
@@ -147,7 +149,7 @@ function install(): void {
       }, shot);
       void navigator.clipboard?.writeText(payload.snippet ?? "").catch(() => {}); // 与调试标记一致：同时进剪贴板，失败不影响送达
       const r = await ask({ type: 'berrytrace-annotate-send', payload });
-      if (r?.ok) { sent += 1; setStatus(shotFailed ? `已送进输入框（第 ${sent} 条），但截图没拍到` : `已送进输入框（第 ${sent} 条）`, shotFailed); }
+      if (r?.ok) { sent += 1; setStatus(shotFailed ? `已送进输入框（第 ${sent} 条），但截图没拍到：${shotError}` : `已送进输入框（第 ${sent} 条）`, shotFailed); }
       else if (r?.error === 'NOT_CONNECTED') setStatus('客户端没连上：请先打开莓莓印记 App', true);
       else setStatus(`没送成：${r?.error ?? '未知错误'}`, true);
     } catch (e) {
