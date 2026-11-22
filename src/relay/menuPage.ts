@@ -37,7 +37,9 @@ document.getElementById('m-agent')?.addEventListener('click', async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (tab?.id == null) { show('找不到当前标签页'); return; }
-    await chrome.sidePanel.setOptions({ tabId: tab.id, path: 'agent-panel.html', enabled: true });
+    // 不带 tabId：对所有标签页生效。只对当前标签设的话，换到别的页面侧栏就会回到默认的剪藏面板
+    // （side-panel.html），在新页面上提示「This page cannot be clipped.」。
+    await chrome.sidePanel.setOptions({ path: 'agent-panel.html', enabled: true });
     await chrome.sidePanel.open({ tabId: tab.id });
     window.close();
   } catch (e) {
