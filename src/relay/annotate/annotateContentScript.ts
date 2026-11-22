@@ -94,7 +94,7 @@ function install(): void {
     const r = el.getBoundingClientRect();
     card = document.createElement('div');
     card.className = 'card';
-    card.innerHTML = '<textarea placeholder="备注（可不写）"></textarea><label><input type="checkbox" class="shot">附这个元素的截图</label><div class="row"><button class="no">取消</button><button class="go">送给 Agent</button></div>';
+    card.innerHTML = '<textarea placeholder="备注（可不写）"></textarea><label><input type="checkbox" class="shot" checked>附这个元素的截图</label><div class="row"><button class="no">取消</button><button class="go">送给 Agent</button></div>';
     const left = Math.min(Math.max(8, r.left), window.innerWidth - 296);
     const below = r.bottom + 8 + 150 < window.innerHeight;
     card.style.left = `${left}px`;
@@ -136,6 +136,8 @@ function install(): void {
     setStatus('正在送…');
     try {
       const shot = wantShot ? await shoot(el) : undefined;
+      // 要了截图却没拍到：不静默丢，状态栏说一声（文字照常送）
+      const shotFailed = wantShot && !shot;
       const payload = buildHandoffPayload({
         url: location.href,
         title: document.title,
@@ -145,7 +147,7 @@ function install(): void {
       }, shot);
       void navigator.clipboard?.writeText(payload.snippet ?? "").catch(() => {}); // 与调试标记一致：同时进剪贴板，失败不影响送达
       const r = await ask({ type: 'berrytrace-annotate-send', payload });
-      if (r?.ok) { sent += 1; setStatus(`已送进输入框（第 ${sent} 条）`); }
+      if (r?.ok) { sent += 1; setStatus(shotFailed ? `已送进输入框（第 ${sent} 条），但截图没拍到` : `已送进输入框（第 ${sent} 条）`, shotFailed); }
       else if (r?.error === 'NOT_CONNECTED') setStatus('客户端没连上：请先打开莓莓印记 App', true);
       else setStatus(`没送成：${r?.error ?? '未知错误'}`, true);
     } catch (e) {
