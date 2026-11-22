@@ -49,6 +49,7 @@ import {
   wakeRecording,
   type RecordingStateView,
 } from './recordSwBridge';
+import { installAnnotateSwBridge, rebindAnnotateChannel } from './annotate/annotateSwBridge';
 import { wakeVerdict } from './manualWake';
 import { runSelfTest } from './selftest';
 import { listPageFrames, scriptTarget } from './injectFrames';
@@ -1067,8 +1068,10 @@ export function initBerrytraceRelay(): BerrytraceRelay {
   if (!recordingBridgeInstalled) {
     recordingBridgeInstalled = true;
     installRecordingSwBridge(singleton);
+    installAnnotateSwBridge(singleton);   // 标记模式：同样顶层同步装
   } else {
     rebindRecordingChannel(singleton);   // restartBerrytraceRelay 换了对象
+    rebindAnnotateChannel(singleton);
   }
   installKeepaliveAlarm();
   installUserActivityWake();

@@ -45,7 +45,7 @@ export interface RecordingStateView {
 
 /** 这一层只需要中继的这一个能力，所以只要这一个 —— 免得和 relay 互相 import */
 export interface HostChannel {
-  sendToHost(method: string, params: unknown[]): Promise<unknown>;
+  sendToHost(method: string, params: unknown[], timeoutMs?: number): Promise<unknown>;
 }
 
 let channel: HostChannel | null = null;

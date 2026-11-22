@@ -122,6 +122,13 @@
       },
       "description": "__MSG_commandQuickClip__"
     },
+    "toggle_annotate": {
+      "suggested_key": {
+        "default": "Alt+Shift+M",
+        "mac": "Alt+Shift+M"
+      },
+      "description": "BerryTrace: annotate mode (send marks to the desktop agent)"
+    },
     "toggle_highlighter": {
       "suggested_key": {
         "default": "Alt+Shift+H",

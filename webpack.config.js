@@ -151,6 +151,8 @@ module.exports = (env, argv) => {
 			// 录制那条工具条 + 页面采集。注入用户访问的每一个页面，
 			// **不在录的时候它只发一条消息就完事**（见该文件头）。
 			'relay-record': './src/relay/recordContentScript.ts',
+			// 标记模式的页面脚本：只在用户开标记模式时由 service worker 注入，不进 manifest 的 content_scripts
+			'relay-annotate': './src/relay/annotate/annotateContentScript.ts',
 			// 弹窗里「唤醒录制工具条」按钮的脚本（自动唤醒没成时的手动补救）
 			'relay-wake-button': './src/relay/wakeButton.ts',
 			// 看不见的转换页：HTML → Markdown。**service worker 里没有 DOM**，
