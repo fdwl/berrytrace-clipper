@@ -157,6 +157,8 @@ module.exports = (env, argv) => {
 			'relay-wake-button': './src/relay/wakeButton.ts',
 			// 点工具栏图标的菜单页（标记 / Agent 对话框 / 提取网页内容）
 			'relay-menu': './src/relay/menuPage.ts',
+			// 浏览器侧栏里的 mini Agent
+			'relay-agent-panel': './src/relay/agentPanelPage.ts',
 			// 看不见的转换页：HTML → Markdown。**service worker 里没有 DOM**，
 			// turndown 在那儿会静默降级成「原样返回 HTML」——详见该文件的文件头。
 			offscreen: './src/relay/offscreenMarkdown.ts',
@@ -361,6 +363,7 @@ module.exports = (env, argv) => {
 					},
 					{ from: "src/popup.html", to: "popup.html", transform: processHtml },
 					{ from: "src/menu.html", to: "menu.html" },
+					{ from: "src/agent-panel.html", to: "agent-panel.html" },
 					{ from: "src/side-panel.html", to: "side-panel.html", transform: processHtml },
 					{ from: "src/settings.html", to: "settings.html", transform: processHtml },
 					{ from: "src/highlights.html", to: "highlights.html", transform: processHtml },

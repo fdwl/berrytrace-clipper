@@ -17,14 +17,22 @@ document.getElementById('m-annotate')?.addEventListener('click', () => {
   });
 });
 
-document.getElementById('m-agent')?.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'berrytrace-open-mini-agent' }, (r: { ok: boolean; error?: string } | undefined) => {
-    if (chrome.runtime.lastError || !r) { show('插件后台没有应答，请在 chrome://extensions 里重新加载本插件'); return; }
-    if (r.ok) { window.close(); return; }
-    show(r.error === 'NOT_CONNECTED' ? '没连上客户端：请先启动莓莓印记客户端' : `打开失败：${r.error ?? '未知原因'}`);
-  });
+// 「Agent 对话框」= 浏览器右侧栏里的 mini Agent。侧栏页自己去连客户端（没开就静默唤醒），这里只负责打开侧栏。
+// sidePanel.open 必须在用户点击的当下调用，所以放在这里而不是后台。
+document.getElementById('m-agent')?.addEventListener('click', async () => {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (tab?.id == null) { show('找不到当前标签页'); return; }
+    await chrome.sidePanel.setOptions({ tabId: tab.id, path: 'agent-panel.html', enabled: true });
+    await chrome.sidePanel.open({ tabId: tab.id });
+    window.close();
+  } catch (e) {
+    show(`打开侧栏失败：${String((e as Error)?.message ?? e)}`);
+  }
 });
 
 document.getElementById('m-clip')?.addEventListener('click', () => {
   window.location.href = 'popup.html';
 });
+
+export {};

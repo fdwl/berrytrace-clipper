@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8">
+		<title>莓莓对话</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<style>
+			:root { color-scheme: light dark; --bg: #fff; --fg: #1f2328; --muted: #6b7280; }
+			@media (prefers-color-scheme: dark) { :root { --bg: #1e1f22; --fg: #e6e6e6; --muted: #9aa0a6; } }
+			html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+			iframe { display: none; width: 100%; height: 100%; border: 0; }
+			#state { display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; color: var(--muted); }
+			#state button { padding: 6px 14px; border: 1px solid currentColor; border-radius: 8px; background: none; color: inherit; font: inherit; cursor: pointer; }
+		</style>
+	</head>
+	<body>
+		<div id="state"><span id="msg">正在连接莓莓印记客户端…</span></div>
+		<iframe id="frame" allow="clipboard-read; clipboard-write; microphone"></iframe>
+		<script src="relay-agent-panel.js"></script>
+	</body>
+</html>

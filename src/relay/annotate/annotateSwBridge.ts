@@ -20,6 +20,30 @@ export const ANNOTATE_COMMAND = 'toggle_annotate';
 
 let channel: HostChannel | null = null;
 
+/** 开着的侧栏页（长连接）。有它，标记就送侧栏；没有，走老路（客户端右栏）。 */
+const panelPorts = new Set<chrome.runtime.Port>();
+/** 已经发过唤醒、还没连上：避免侧栏每 1.5 秒轮询时反复弹唤醒链接。连上后清掉。 */
+let wakeSent = false;
+
+/** 静默唤醒客户端：berrytrace://wake?silent=true（客户端不开窗、不抢焦点）。用完立刻关掉那个空标签。 */
+function wakeClientSilently(): void {
+  if (wakeSent) return;
+  wakeSent = true;
+  chrome.tabs.create({ url: 'berrytrace://wake?silent=true', active: false }, (tab) => {
+    void chrome.runtime.lastError;
+    if (tab?.id == null) return;
+    const id = tab.id;
+    const close = (tabId: number): void => {
+      if (tabId !== id) return;
+      chrome.tabs.onUpdated.removeListener(close);
+      chrome.tabs.remove(id, () => void chrome.runtime.lastError);
+    };
+    chrome.tabs.onUpdated.addListener(close);
+  });
+}
+
+const TERMINAL_PANEL_ERRORS = /^(PANEL_HOST_UNAVAILABLE|PANEL_HOST_EXITED)/;
+
 export function rebindAnnotateChannel(ch: HostChannel): void {
   channel = ch;
 }
@@ -52,7 +76,31 @@ export function installAnnotateSwBridge(ch: HostChannel): void {
     if (info.menuItemId === MENU_ID) void toggleActiveTab();
   });
 
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== 'bt-agent-panel') return;
+    panelPorts.add(port);
+    port.onDisconnect.addListener(() => panelPorts.delete(port));
+  });
+
   chrome.runtime.onMessage.addListener((msg: { type?: string; payload?: unknown }, sender, sendResponse) => {
+    // 侧栏要对话页地址：客户端按需拉起网页服务后回地址。没连上就静默唤醒客户端，由侧栏自己隔一阵再问。
+    if (msg?.type === 'berrytrace-agent-panel-url') {
+      const ch4 = channel;
+      const notConnected = (): void => { wakeClientSilently(); sendResponse({ ok: false, error: 'NOT_CONNECTED' }); };
+      if (!ch4) { notConnected(); return undefined; }
+      ch4.sendToHost('berrytrace.chat.agentPanel', [], NO_DEADLINE)
+        .then((r) => {
+          wakeSent = false;
+          const url = (r as { url?: string } | null)?.url;
+          sendResponse(url ? { ok: true, url } : { ok: false, error: '客户端没有回对话页地址', terminal: true });
+        })
+        .catch((e: Error) => {
+          const m = String(e?.message ?? e);
+          if (m.startsWith('RELAY_NOT_CONNECTED')) { notConnected(); return; }
+          sendResponse({ ok: false, error: m.replace(/^PANEL_HOST_[A-Z]+:\s*/, ''), terminal: TERMINAL_PANEL_ERRORS.test(m) });
+        });
+      return true;
+    }
     // 菜单里的「Agent 对话框」：让客户端唤出 mini Agent 小窗（宿主侧 berrytrace.chat.openMiniAgent）
     if (msg?.type === 'berrytrace-open-mini-agent') {
       const ch3 = channel;
@@ -79,8 +127,15 @@ export function installAnnotateSwBridge(ch: HostChannel): void {
     if (msg?.type === 'berrytrace-annotate-send') {
       const ch2 = channel;
       if (!ch2) { sendResponse({ ok: false, error: 'NOT_CONNECTED' }); return undefined; }
-      ch2.sendToHost(CHAT_HANDOFF_METHOD, [msg.payload], NO_DEADLINE)
-        .then(() => sendResponse({ ok: true }))
+      // 侧栏开着：让客户端只把拼好的交接回给我，由我送进侧栏输入框（客户端窗口不动、不抢焦点）。
+      const toPanel = panelPorts.size > 0;
+      const payload = toPanel ? { ...(msg.payload as object), returnSpec: true } : msg.payload;
+      ch2.sendToHost(CHAT_HANDOFF_METHOD, [payload], NO_DEADLINE)
+        .then((r) => {
+          const spec = (r as { spec?: unknown } | null)?.spec;
+          if (toPanel && spec) for (const p of panelPorts) p.postMessage({ type: 'handoff', spec });
+          sendResponse({ ok: true });
+        })
         .catch((e: Error) => {
           const m = String(e?.message ?? e);
           sendResponse({ ok: false, error: m.startsWith('RELAY_NOT_CONNECTED') ? 'NOT_CONNECTED' : m });
