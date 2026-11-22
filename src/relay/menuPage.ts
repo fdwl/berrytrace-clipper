@@ -3,6 +3,8 @@
  * 「提取网页内容」就是原来的剪藏弹窗（popup.html），在同一个弹窗里切过去，不动剪藏本身。
  * 只在 Chrome 构建里作为默认弹窗（manifest.chrome.json）；Firefox / Safari 仍直接是剪藏弹窗。
  */
+import { statusView, STATUS_POLL_MS } from './menuStatus';
+
 const note = document.getElementById('note');
 const show = (text: string): void => {
   if (!note) return;
@@ -16,13 +18,22 @@ if (ver) ver.textContent = `v${chrome.runtime.getManifest().version}`;
 const statusEl = document.getElementById('status');
 const statusText = document.getElementById('status-text');
 const statusHint = document.getElementById('status-hint');
-chrome.runtime.sendMessage({ type: 'berrytrace-relay-status' }, (r: { connected?: boolean } | undefined) => {
-  void chrome.runtime.lastError;
-  const on = !!r?.connected;
-  statusEl?.classList.toggle('on', on);
-  if (statusText) statusText.textContent = on ? '客户端已连接' : '客户端未连接';
-  if (statusHint) statusHint.textContent = on ? '' : '用 Agent 对话框会自动启动';
-});
+function renderStatus(connected: boolean | undefined): void {
+  const v = statusView(connected);
+  statusEl?.classList.toggle('on', v.on);
+  if (statusText) statusText.textContent = v.text;
+  if (statusHint) statusHint.textContent = v.hint;
+}
+renderStatus(undefined);
+// 菜单开着期间每秒问一次：后台刚被唤醒时连接常常还在握手，第一次答「没连上」不代表真没连上。
+function pollStatus(): void {
+  chrome.runtime.sendMessage({ type: 'berrytrace-relay-status' }, (r: { connected?: boolean } | undefined) => {
+    void chrome.runtime.lastError;
+    renderStatus(!!r?.connected);
+  });
+}
+pollStatus();
+setInterval(pollStatus, STATUS_POLL_MS);
 
 document.getElementById('m-annotate')?.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'berrytrace-annotate-toggle-active' }, () => {
