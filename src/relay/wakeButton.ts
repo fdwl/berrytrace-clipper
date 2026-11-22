@@ -35,3 +35,15 @@ if (button && note) {
     });
   });
 }
+
+// 「标记」图标：开关当前页的标记模式，然后收起弹窗，让用户直接在页面上点元素。
+const annotateButton = document.getElementById('bt-annotate');
+if (annotateButton) {
+  annotateButton.addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.runtime.sendMessage({ type: 'berrytrace-annotate-toggle-active' }, () => {
+      void chrome.runtime.lastError;
+      window.close();
+    });
+  });
+}

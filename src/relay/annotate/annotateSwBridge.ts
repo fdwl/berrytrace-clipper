@@ -53,6 +53,11 @@ export function installAnnotateSwBridge(ch: HostChannel): void {
   });
 
   chrome.runtime.onMessage.addListener((msg: { type?: string; payload?: unknown }, sender, sendResponse) => {
+    // 弹窗里的「标记」图标：开关当前标签页的标记模式（和快捷键、右键菜单同一条路）
+    if (msg?.type === 'berrytrace-annotate-toggle-active') {
+      void toggleActiveTab().then(() => sendResponse({ ok: true }));
+      return true;
+    }
     if (msg?.type === 'berrytrace-annotate-capture') {
       chrome.tabs.captureVisibleTab(sender.tab?.windowId ?? chrome.windows.WINDOW_ID_CURRENT, { format: 'png' })
         .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
