@@ -53,6 +53,18 @@ export function installAnnotateSwBridge(ch: HostChannel): void {
   });
 
   chrome.runtime.onMessage.addListener((msg: { type?: string; payload?: unknown }, sender, sendResponse) => {
+    // 菜单里的「Agent 对话框」：让客户端唤出 mini Agent 小窗（宿主侧 berrytrace.chat.openMiniAgent）
+    if (msg?.type === 'berrytrace-open-mini-agent') {
+      const ch3 = channel;
+      if (!ch3) { sendResponse({ ok: false, error: 'NOT_CONNECTED' }); return undefined; }
+      ch3.sendToHost('berrytrace.chat.openMiniAgent', [], NO_DEADLINE)
+        .then(() => sendResponse({ ok: true }))
+        .catch((e: Error) => {
+          const m = String(e?.message ?? e);
+          sendResponse({ ok: false, error: m.startsWith('RELAY_NOT_CONNECTED') ? 'NOT_CONNECTED' : m });
+        });
+      return true;
+    }
     // 弹窗里的「标记」图标：开关当前标签页的标记模式（和快捷键、右键菜单同一条路）
     if (msg?.type === 'berrytrace-annotate-toggle-active') {
       void toggleActiveTab().then(() => sendResponse({ ok: true }));

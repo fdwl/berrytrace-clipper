@@ -28,7 +28,7 @@
     "https://*/*"
   ],
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "menu.html"
   },
   "side_panel": {
     "default_path": "side-panel.html"
@@ -137,10 +137,6 @@
       "description": "__MSG_commandToggleHighlighter__"
     },
     "toggle_reader": {
-      "suggested_key": {
-        "default": "Alt+Shift+R",
-        "mac": "Alt+Shift+R"
-      },
       "description": "__MSG_commandToggleReader__"
     }
   }
