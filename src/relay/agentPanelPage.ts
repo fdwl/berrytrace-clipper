@@ -63,7 +63,8 @@ async function postPageContext(): Promise<void> {
   if (!frameReady || !frame.contentWindow) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.url) return;
-  frame.contentWindow.postMessage({ type: 'berrytrace-page-context', url: tab.url, title: tab.title ?? '' }, origin);
+  // caps：本扩展认得的侧栏能力。老版本不带这个字段，对话页据此把「截取当前页」置灰并说明，而不是点了没反应。
+  frame.contentWindow.postMessage({ type: 'berrytrace-page-context', url: tab.url, title: tab.title ?? '', caps: ['capture-page'] }, origin);
 }
 chrome.tabs.onActivated.addListener(() => { void postPageContext(); });
 chrome.tabs.onUpdated.addListener((_id, info, tab) => { if (tab.active && (info.url || info.title || info.status === 'complete')) void postPageContext(); });
