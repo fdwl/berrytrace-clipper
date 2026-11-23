@@ -22,25 +22,8 @@ let channel: HostChannel | null = null;
 
 /** 开着的侧栏页（长连接）。有它，标记就送侧栏；没有，走老路（客户端右栏）。 */
 const panelPorts = new Set<chrome.runtime.Port>();
-/** 已经发过唤醒、还没连上：避免侧栏每 1.5 秒轮询时反复弹唤醒链接。连上后清掉。 */
-let wakeSent = false;
-
-/** 静默唤醒客户端：berrytrace://wake?silent=true（客户端不开窗、不抢焦点）。用完立刻关掉那个空标签。 */
-function wakeClientSilently(): void {
-  if (wakeSent) return;
-  wakeSent = true;
-  chrome.tabs.create({ url: 'berrytrace://wake?silent=true', active: false }, (tab) => {
-    void chrome.runtime.lastError;
-    if (tab?.id == null) return;
-    const id = tab.id;
-    const close = (tabId: number): void => {
-      if (tabId !== id) return;
-      chrome.tabs.onUpdated.removeListener(close);
-      chrome.tabs.remove(id, () => void chrome.runtime.lastError);
-    };
-    chrome.tabs.onUpdated.addListener(close);
-  });
-}
+// 这里不再用 tabs.create 开后台标签去唤醒客户端：确认框挂在后台标签上，用户看不到，客户端起不来。
+// 唤醒由侧栏页里用户点的真链接完成，见 agentPanelState.ts。
 
 const TERMINAL_PANEL_ERRORS = /^(PANEL_HOST_UNAVAILABLE|PANEL_HOST_EXITED)/;
 
@@ -86,11 +69,10 @@ export function installAnnotateSwBridge(ch: HostChannel): void {
     // 侧栏要对话页地址：客户端按需拉起网页服务后回地址。没连上就静默唤醒客户端，由侧栏自己隔一阵再问。
     if (msg?.type === 'berrytrace-agent-panel-url') {
       const ch4 = channel;
-      const notConnected = (): void => { wakeClientSilently(); sendResponse({ ok: false, error: 'NOT_CONNECTED' }); };
+      const notConnected = (): void => { sendResponse({ ok: false, error: 'NOT_CONNECTED' }); };
       if (!ch4) { notConnected(); return undefined; }
       ch4.sendToHost('berrytrace.chat.agentPanel', [], NO_DEADLINE)
         .then((r) => {
-          wakeSent = false;
           const url = (r as { url?: string } | null)?.url;
           sendResponse(url ? { ok: true, url } : { ok: false, error: '客户端没有回对话页地址', terminal: true });
         })

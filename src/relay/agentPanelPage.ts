@@ -2,14 +2,16 @@
  * 浏览器右侧栏里的 mini Agent（agent-panel.html）。
  *
  * 流程：问后台要对话页地址 → 后台经中继问客户端（客户端按需拉起「只出对话页」的网页服务，回地址）→ iframe 打开。
- * 客户端没在跑：后台先用 berrytrace://wake?silent=true 静默唤醒（不开窗、不抢焦点），然后这里
- * 每 1.5 秒再问一次，界面写着「正在启动客户端…」。
+ * 客户端没在跑：这里显示「启动莓莓印记」链接（真 <a href="berrytrace://wake?silent=true">，用户点才算手势，
+ * 确认框才会出现在眼前，勾「始终允许」后以后一点就起；原因与实测见 agentPanelState.ts），同时
+ * 每 1.5 秒再问一次，连上就自动进对话页。
  * 🔴 不设期限：只有后台明确回「客户端缺网页形态产物」这类终局错误才停下来报错
  * （李博 2026-10-22「等待就是等待」）。
  *
  * 标记：后台拿到客户端拼好的交接后，经这条长连接送来，这里 postMessage 进 iframe（对面只认扩展页来源）。
  */
 import { isFromPanelFrame } from './panelFrameGuard';
+import { panelWaitView, WAKE_URL, type PanelWaitView } from './agentPanelState';
 
 const msg = document.getElementById('msg') as HTMLElement;
 const state = document.getElementById('state') as HTMLElement;
@@ -32,6 +34,26 @@ function show(text: string, retry = false): void {
   }
 }
 
+/**
+ * 等客户端起来：隔 1.5 秒重画一次，所以「启动」链接只建一次、之后只改文字，
+ * 不能每轮都删了重建（用户点到一半链接被换掉，点击就丢了）。
+ */
+function showWaiting(view: PanelWaitView): void {
+  state.style.display = 'flex';
+  frame.style.display = 'none';
+  msg.textContent = view.text;
+  state.querySelector('button')?.remove();
+  let link = document.getElementById('bt-launch') as HTMLAnchorElement | null;
+  if (view.showLaunch && !link) {
+    link = document.createElement('a');
+    link.id = 'bt-launch';
+    link.href = WAKE_URL; // 必须是真链接、由用户点击：脚本导航会被浏览器当成无手势拦掉
+    link.textContent = '启动莓莓印记';
+    state.appendChild(link);
+  }
+  if (!view.showLaunch) link?.remove();
+}
+
 function flush(): void {
   if (!frameReady || !frame.contentWindow) return;
   while (pending.length) frame.contentWindow.postMessage({ type: 'berrytrace-handoff', spec: pending.shift() }, origin);
@@ -52,7 +74,7 @@ async function boot(): Promise<void> {
       return;
     }
     if (r && !r.ok && r.terminal) { show(r.error, true); return; }
-    show('正在启动莓莓印记客户端…');
+    showWaiting(panelWaitView(r));
     await new Promise((x) => setTimeout(x, 1500));
   }
 }
