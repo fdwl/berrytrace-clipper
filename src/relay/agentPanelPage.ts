@@ -25,6 +25,7 @@ function show(text: string, retry = false): void {
   state.style.display = 'flex';
   frame.style.display = 'none';
   msg.textContent = text;
+  document.getElementById('bt-detail')?.remove();
   state.querySelector('button')?.remove();
   if (retry) {
     const b = document.createElement('button');
@@ -42,6 +43,13 @@ function showWaiting(view: PanelWaitView): void {
   state.style.display = 'flex';
   frame.style.display = 'none';
   msg.textContent = view.text;
+  let detailEl = document.getElementById('bt-detail');
+  if (!detailEl) {
+    detailEl = document.createElement('small');
+    detailEl.id = 'bt-detail';
+    state.appendChild(detailEl);
+  }
+  detailEl.textContent = view.detail;
   state.querySelector('button')?.remove();
   let link = document.getElementById('bt-launch') as HTMLAnchorElement | null;
   if (view.showLaunch && !link) {
@@ -63,7 +71,9 @@ type UrlReply = { ok: true; url: string } | { ok: false; error: string; terminal
 
 async function boot(): Promise<void> {
   show('正在连接莓莓印记客户端…');
+  let attempt = 0;
   for (;;) {
+    attempt++;
     const r = await new Promise<UrlReply | undefined>((res) => chrome.runtime.sendMessage({ type: 'berrytrace-agent-panel-url' }, (x) => { void chrome.runtime.lastError; res(x); }));
     if (r?.ok) {
       origin = new URL(r.url).origin;
@@ -74,7 +84,7 @@ async function boot(): Promise<void> {
       return;
     }
     if (r && !r.ok && r.terminal) { show(r.error, true); return; }
-    showWaiting(panelWaitView(r));
+    showWaiting(panelWaitView(r, { attempt, version: chrome.runtime.getManifest().version }));
     await new Promise((x) => setTimeout(x, 1500));
   }
 }

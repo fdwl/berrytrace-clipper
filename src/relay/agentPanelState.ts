@@ -25,16 +25,41 @@ export interface PanelWaitView {
   text: string;
   /** 要不要显示「启动莓莓印记」链接（用户点它才是带手势的启动） */
   showLaunch: boolean;
+  /**
+   * 一行小字：最后一次失败的原因原文 + 第几次重试 + 扩展版本。
+   * 为什么要有：「正在启动客户端…」会盖住所有非终局的失败原因，客户机器上没有日志时，
+   * 卡住了谁也说不清是没连上中继、中继断了还是客户端回了别的错误。有这一行，客户一张截图就能定位。
+   * 失效条件：侧栏不再无期限重试（卡住时有明确终局界面）之后可删。
+   */
+  detail: string;
+}
+
+export interface PanelWaitContext {
+  /** 第几次问（从 1 起） */
+  attempt: number;
+  /** 扩展版本（manifest.version） */
+  version: string;
 }
 
 /** 后台回了没连上客户端（或根本没回）时，页面显示的内容。 */
-export function panelWaitView(r: PanelUrlReply | undefined): PanelWaitView {
+export function panelWaitView(r: PanelUrlReply | undefined, ctx: PanelWaitContext = { attempt: 0, version: '' }): PanelWaitView {
+  const detail = panelWaitDetail(r, ctx);
   const notConnected = !r || (!r.ok && r.error === 'NOT_CONNECTED');
   if (notConnected) {
     return {
       text: '莓莓印记客户端没在运行。点下面的按钮启动；浏览器问「是否允许」时勾上「始终允许」，以后一点就启动。',
       showLaunch: true,
+      detail,
     };
   }
-  return { text: '正在启动莓莓印记客户端…', showLaunch: false };
+  return { text: '正在启动莓莓印记客户端…', showLaunch: false, detail };
+}
+
+/** 纯函数：卡住时那行小字。回复里没有原因时写明「后台没回话」，不留空。 */
+export function panelWaitDetail(r: PanelUrlReply | undefined, ctx: PanelWaitContext): string {
+  const reason = !r ? '后台没回话' : r.ok ? '回复里没有地址' : (r.error || '(空)');
+  const parts = [`最后一次失败：${reason}`];
+  if (ctx.attempt > 0) parts.push(`第 ${ctx.attempt} 次`);
+  if (ctx.version) parts.push(`扩展 v${ctx.version}`);
+  return parts.join(' · ');
 }
