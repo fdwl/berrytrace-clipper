@@ -54,6 +54,7 @@ import { wakeVerdict } from './manualWake';
 import { runSelfTest } from './selftest';
 import { listPageFrames, scriptTarget } from './injectFrames';
 import { findActiveTab } from './activeTab';
+import { browserIdFromUserAgent } from './browserId';
 
 /** 宿主 App 监听的默认端口。可被设置覆盖 —— 端口撞车是常态，不是异常。 */
 const DEFAULT_RELAY_PORT = 47823;
@@ -202,11 +203,7 @@ const RELAY_BUILD = RELAY_CAPABILITY_MARK.slice('BT-RELAY-CAPABLE:'.length);
  * 顺序要紧：Edge 的 UA 里**同时含有** `Chrome/`，所以先判 Edge。
  */
 function detectBrowserId(): string {
-  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
-  if (/\bEdg\//.test(ua)) return 'edge';
-  if (/\bOPR\//.test(ua)) return 'opera';
-  if (/\bChrome\//.test(ua)) return 'chrome';
-  return 'other';
+  return browserIdFromUserAgent(typeof navigator !== 'undefined' ? navigator.userAgent : '');
 }
 
 /**
